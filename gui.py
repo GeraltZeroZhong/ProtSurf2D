@@ -20,7 +20,7 @@ from src.visualizer import InterfaceVisualizer
 class ProtSurfApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("ProtSurf2D - Protein Interface Mapper")
+        self.root.title("TopoPPI - Mapping Protein Interaction Surfaces")
         self.root.geometry("1200x950") 
 
         self.cached_viz = None
@@ -383,3 +383,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = ProtSurfApp(root)
     root.mainloop()
+
