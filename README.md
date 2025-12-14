@@ -59,7 +59,7 @@ Steps:
   - `io_loader.py` — PDB/mmCIF loading and chain extraction.
   - `surface.py` — Solvent-excluded surface generation from atomic coordinates.
   - `topology.py` — Interface patch detection and topology utilities.
-  - `parameterization.py` — Patch flattening via LSCM.
+  - `parameterization.py` — Patch flattening via LSCM and Harmonic Parameterization.
   - `visualizer.py` — Plotting routines for interface maps.
 - `environment.yml` — Conda environment specification with Python and scientific stack dependencies.
 - `LICENSE` — MIT License details.
