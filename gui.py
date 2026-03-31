@@ -113,31 +113,56 @@ class ProtSurfApp:
 
         ttk.Label(param_frame, text="Sigma:").grid(row=4, column=0, sticky='w')
         self.entry_sigma = ttk.Entry(param_frame, width=10)
-        self.entry_sigma.insert(0, "1.5")
+        self.entry_sigma.insert(0, "1.0")
         self.entry_sigma.grid(row=4, column=1, pady=2)
+
+        ttk.Label(param_frame, text="Min Points/Interface:").grid(row=5, column=0, sticky='w')
+        self.entry_min_points = ttk.Entry(param_frame, width=10)
+        self.entry_min_points.insert(0, "10")
+        self.entry_min_points.grid(row=5, column=1, pady=2)
 
         self.var_joint_opt = tk.BooleanVar(value=True)
         self.chk_joint_opt = ttk.Checkbutton(param_frame, text="Enable Joint UV Opt", variable=self.var_joint_opt)
-        self.chk_joint_opt.grid(row=5, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        self.chk_joint_opt.grid(row=6, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        ttk.Label(param_frame, text="Overlap Weight:").grid(row=6, column=0, sticky='w')
+        ttk.Label(param_frame, text="Overlap Weight:").grid(row=7, column=0, sticky='w')
         self.entry_overlap_weight = ttk.Entry(param_frame, width=10)
         self.entry_overlap_weight.insert(0, "1.0")
-        self.entry_overlap_weight.grid(row=6, column=1, pady=2)
+        self.entry_overlap_weight.grid(row=7, column=1, pady=2)
 
-        ttk.Label(param_frame, text="UV Max Iter:").grid(row=7, column=0, sticky='w')
+        ttk.Label(param_frame, text="UV Max Iter:").grid(row=8, column=0, sticky='w')
         self.entry_uv_iter = ttk.Entry(param_frame, width=10)
         self.entry_uv_iter.insert(0, "60")
-        self.entry_uv_iter.grid(row=7, column=1, pady=2)
+        self.entry_uv_iter.grid(row=8, column=1, pady=2)
 
         self.var_use_optcuts = tk.BooleanVar(value=False)
         self.chk_use_optcuts = ttk.Checkbutton(param_frame, text="Use OptCuts Binary", variable=self.var_use_optcuts)
-        self.chk_use_optcuts.grid(row=8, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        self.chk_use_optcuts.grid(row=9, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        ttk.Label(param_frame, text="OptCuts Bin:").grid(row=9, column=0, sticky='w')
+        ttk.Label(param_frame, text="OptCuts Bin:").grid(row=10, column=0, sticky='w')
         self.entry_optcuts_bin = ttk.Entry(param_frame, width=14)
         self.entry_optcuts_bin.insert(0, "OptCuts_bin")
-        self.entry_optcuts_bin.grid(row=9, column=1, pady=2)
+        self.entry_optcuts_bin.grid(row=10, column=1, pady=2)
+
+        self.var_auto_cutoff = tk.BooleanVar(value=False)
+        self.chk_auto_cutoff = ttk.Checkbutton(param_frame, text="Auto Search Best Cutoff", variable=self.var_auto_cutoff)
+        self.chk_auto_cutoff.grid(row=11, column=0, columnspan=2, sticky='w', pady=(4, 0))
+
+        ttk.Label(param_frame, text="Cutoff Start/End:").grid(row=12, column=0, sticky='w')
+        cutoff_range_frame = ttk.Frame(param_frame)
+        cutoff_range_frame.grid(row=12, column=1, pady=2, sticky='w')
+        self.entry_cutoff_start = ttk.Entry(cutoff_range_frame, width=4)
+        self.entry_cutoff_start.insert(0, "3.0")
+        self.entry_cutoff_start.pack(side=tk.LEFT)
+        ttk.Label(cutoff_range_frame, text="~").pack(side=tk.LEFT, padx=2)
+        self.entry_cutoff_end = ttk.Entry(cutoff_range_frame, width=4)
+        self.entry_cutoff_end.insert(0, "10.0")
+        self.entry_cutoff_end.pack(side=tk.LEFT)
+
+        ttk.Label(param_frame, text="Cutoff Step:").grid(row=13, column=0, sticky='w')
+        self.entry_cutoff_step = ttk.Entry(param_frame, width=10)
+        self.entry_cutoff_step.insert(0, "0.5")
+        self.entry_cutoff_step.grid(row=13, column=1, pady=2)
 
         # 3. Style Controls
         style_frame = ttk.LabelFrame(self.left_frame, text="3. Visualization Style", padding=10)
@@ -319,11 +344,16 @@ class ProtSurfApp:
             'cutoff': float(self.entry_cutoff.get()),
             'res': float(self.entry_res.get()),
             'sigma': float(self.entry_sigma.get()),
+            'min_points': int(self.entry_min_points.get()),
             'enable_joint_opt': bool(self.var_joint_opt.get()),
             'use_optcuts': bool(self.var_use_optcuts.get()),
             'optcuts_bin': self.entry_optcuts_bin.get().strip() or "OptCuts_bin",
             'overlap_weight': float(self.entry_overlap_weight.get()),
-            'uv_max_iter': int(self.entry_uv_iter.get())
+            'uv_max_iter': int(self.entry_uv_iter.get()),
+            'auto_cutoff': bool(self.var_auto_cutoff.get()),
+            'cutoff_start': float(self.entry_cutoff_start.get()),
+            'cutoff_end': float(self.entry_cutoff_end.get()),
+            'cutoff_step': float(self.entry_cutoff_step.get())
         }
         self.label_offsets = {}
         self.btn_run.config(state=tk.DISABLED)
@@ -638,24 +668,7 @@ class ProtSurfApp:
 
             # --- Step 3: Topology ---
             self.log("Extracting interface patches...")
-            topo = TopologyManager(mesh_A, coords_B)
-            patches = topo.get_interface_patches(distance_cutoff=params['cutoff'])
-            if not patches: raise ValueError("No interface found with current cutoff.")
-
-            # --- Step 4: Parameterization ---
-            self.log(f"Flattening {len(patches)} patches...")
             param = Parameterizer()
-            valid_patches = []
-            for p in patches:
-                uv = param.flatten_patch(p)
-                if uv is not None:
-                    p.metadata['uv'] = uv
-                    valid_patches.append(p)
-            
-            if not valid_patches: raise ValueError("LSCM Parameterization failed for all patches.")
-
-            # --- Step 5: Joint UV Optimization ---
-            self.log("Optimizing global UV layout...")
             optimizer = OptCutsUVOptimizer(
                 UVOptimizerConfig(
                     enabled=params.get('enable_joint_opt', True),
@@ -665,11 +678,6 @@ class ProtSurfApp:
                     max_iterations=params.get('uv_max_iter', 60)
                 )
             )
-            valid_patches = optimizer.optimize_patches(valid_patches)
-
-            # --- Step 6: Visualization ---
-            self.log("Rendering visualization...")
-            
             viz = InterfaceVisualizer(
                 chain_A_atoms=atoms_A, 
                 chain_A_coords=coords_A, 
@@ -679,13 +687,120 @@ class ProtSurfApp:
                 chain_b_id=params['chain_b'],
                 arpeggio_file=arpeggio_file
             )
+
+            cutoff_value = params['cutoff']
+            if params.get('auto_cutoff', False):
+                cutoff_value = self._search_best_cutoff(
+                    mesh_A,
+                    coords_B,
+                    param,
+                    optimizer,
+                    viz,
+                    params['cutoff_start'],
+                    params['cutoff_end'],
+                    params['cutoff_step'],
+                    params['min_points']
+                )
+                self.log(f"Auto-selected cutoff = {cutoff_value:.2f} Å")
+
+            topo = TopologyManager(mesh_A, coords_B)
+            patches = topo.get_interface_patches(distance_cutoff=cutoff_value)
+            if not patches:
+                raise ValueError(f"No interface found with cutoff {cutoff_value:.2f}.")
+
+            self.log(f"Flattening {len(patches)} patches...")
+            valid_patches = self._parameterize_and_optimize_patches(patches, param, optimizer)
+            if not valid_patches:
+                raise ValueError("LSCM Parameterization failed for all patches.")
+
+            display_patches, valid_count, invalid_count = self._split_interfaces_by_point_count(
+                valid_patches,
+                viz,
+                params['min_points']
+            )
+            self.log(
+                f"Interface count summary (min points = {params['min_points']}): "
+                f"valid={valid_count}, invalid={invalid_count}"
+            )
+            if not display_patches:
+                raise ValueError(
+                    f"All interfaces are invalid (point count < {params['min_points']})."
+                )
+
+            # --- Step 6: Visualization ---
+            self.log("Rendering visualization...")
             
             self.cached_viz = viz
-            self.cached_patches = valid_patches
+            self.cached_patches = display_patches
             self.root.after(0, lambda: self.finish_success())
         except Exception as e:
             err_msg = str(e)
             self.root.after(0, lambda: self.show_error(err_msg))
+
+    def _parameterize_and_optimize_patches(self, patches, parameterizer, optimizer):
+        valid_patches = []
+        for p in patches:
+            uv = parameterizer.flatten_patch(p)
+            if uv is not None:
+                p.metadata['uv'] = uv
+                valid_patches.append(p)
+        if not valid_patches:
+            return []
+        return optimizer.optimize_patches(valid_patches)
+
+    def _split_interfaces_by_point_count(self, patches, viz, min_points):
+        valid = []
+        invalid = 0
+        for p in patches:
+            point_count = viz.count_patch_points(p)
+            p.metadata['point_count'] = point_count
+            if point_count >= min_points:
+                valid.append(p)
+            else:
+                invalid += 1
+        return valid, len(valid), invalid
+
+    def _generate_cutoff_values(self, start, end, step):
+        if step <= 0:
+            raise ValueError("Cutoff step must be > 0.")
+        if end < start:
+            raise ValueError("Cutoff end must be >= cutoff start.")
+        values = []
+        cur = start
+        while cur <= end + 1e-8:
+            values.append(round(cur, 6))
+            cur += step
+        return values
+
+    def _search_best_cutoff(self, mesh_A, coords_B, parameterizer, optimizer, viz,
+                            start, end, step, min_points):
+        candidates = self._generate_cutoff_values(start, end, step)
+        best = None
+        for cutoff in candidates:
+            topo = TopologyManager(mesh_A, coords_B)
+            patches = topo.get_interface_patches(distance_cutoff=cutoff)
+            if not patches:
+                self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: no interfaces")
+                continue
+            processed = self._parameterize_and_optimize_patches(patches, parameterizer, optimizer)
+            if not processed:
+                self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: parameterization failed")
+                continue
+            _, valid_count, invalid_count = self._split_interfaces_by_point_count(processed, viz, min_points)
+            self.log(
+                f"[Cutoff Search] cutoff={cutoff:.2f}: valid={valid_count}, invalid={invalid_count}"
+            )
+            if valid_count == 0:
+                continue
+            if best is None or valid_count < best[1]:
+                best = (cutoff, valid_count)
+
+        if best is None:
+            raise ValueError(
+                "Cutoff search failed: no candidate produced valid interfaces. "
+                "Please adjust range/step/min-points."
+            )
+        return best[0]
 
     def finish_success(self):
         style = self.get_style_config()
