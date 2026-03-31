@@ -55,8 +55,14 @@ class Parameterizer:
             # LSCM cannot handle multiple disconnected components in one call.
             components = mesh.split(only_watertight=False)
             if len(components) > 1:
-                # Keep only the largest component by vertex count
-                mesh = max(components, key=lambda m: len(m.vertices))
+                # Keep only the largest component by vertex count.
+                # IMPORTANT: mutate the original object in place so callers that
+                # keep a reference to `mesh` (e.g., for plotting with patch.faces)
+                # remain consistent with returned UV indexing.
+                largest = max(components, key=lambda m: len(m.vertices))
+                mesh.vertices = largest.vertices.copy()
+                mesh.faces = largest.faces.copy()
+                mesh.remove_unreferenced_vertices()
             
             # Check if mesh is still valid
             if len(mesh.vertices) < 3 or len(mesh.faces) == 0:
