@@ -317,54 +317,7 @@ class InterfaceVisualizer:
 
         ax.triplot(uv[:, 0], uv[:, 1], patch.faces, color='gray', alpha=0.15, lw=0.5, zorder=1)
         
-        patch_tree = KDTree(patch.vertices)
-        dists_A_to_patch, vertex_indices = patch_tree.query(self.coords_A)
-        on_patch_mask = dists_A_to_patch < 3.0 
-        
-        if self.arpeggio_data is not None:
-             candidate_indices = np.where(on_patch_mask)[0]
-        else:
-            if self.tree_B:
-                dists_A_to_B_coarse, _ = self.tree_B.query(self.coords_A)
-                interaction_mask = dists_A_to_B_coarse < 8.0
-                candidate_indices = np.where(on_patch_mask & interaction_mask)[0]
-            else:
-                candidate_indices = []
-
-        residue_data = {} 
-        for idx in candidate_indices:
-            atom_A = self.atoms_A[idx]
-            parent = atom_A.get_parent()
-            res_id = parent.get_id()
-            res_seq = res_id[1]
-            
-            u, v = uv[vertex_indices[idx]]
-            if res_id not in residue_data: residue_data[res_id] = {'uvs': [], 'types': set(), 'partners': {}}
-            residue_data[res_id]['uvs'].append([u, v])
-            partner_counts = residue_data[res_id]['partners']
-            if self.arpeggio_data is not None:
-                for p_seq, p_count in self.arpeggio_partners.get(res_seq, {}).items():
-                    partner_counts[p_seq] = partner_counts.get(p_seq, 0) + p_count
-            elif self.atoms_B and self.tree_B:
-                nearby_partner_indices = self.tree_B.query_ball_point(self.coords_A[idx], r=6.0)
-                for b_idx in nearby_partner_indices:
-                    b_seq = self.atoms_B[b_idx].get_parent().get_id()[1]
-                    partner_counts[b_seq] = partner_counts.get(b_seq, 0) + 1
-            
-            if style['color_by_type']:
-                if self.arpeggio_data is not None:
-                    if res_seq in self.arpeggio_data:
-                        residue_data[res_id]['types'].update(self.arpeggio_data[res_seq])
-                else:
-                    if self.atoms_B:
-                        nearby_b_indices = self.tree_B.query_ball_point(self.coords_A[idx], r=6.0)
-                        for b_idx in nearby_b_indices:
-                            dist = np.linalg.norm(self.coords_A[idx] - self.coords_B[b_idx])
-                            i_type = self._get_interaction_type_heuristic(atom_A, self.atoms_B[b_idx], dist)
-                            if i_type:
-                                residue_data[res_id]['types'].add(i_type)
-                                b_seq = self.atoms_B[b_idx].get_parent().get_id()[1]
-                                partner_counts[b_seq] = partner_counts.get(b_seq, 0) + 1
+        residue_data = self._collect_patch_residue_data(patch, uv, include_types=style['color_by_type'])
 
         label_records = []
 
@@ -429,6 +382,64 @@ class InterfaceVisualizer:
         center = uv.mean(axis=0)
         ax.text(center[0], center[1], f"P{patch_id}", fontsize=8, color='black', alpha=0.6)
         return found_types
+
+    def _collect_patch_residue_data(self, patch, uv, include_types=True):
+        patch_tree = KDTree(patch.vertices)
+        dists_A_to_patch, vertex_indices = patch_tree.query(self.coords_A)
+        on_patch_mask = dists_A_to_patch < 3.0
+
+        if self.arpeggio_data is not None:
+            candidate_indices = np.where(on_patch_mask)[0]
+        elif self.tree_B:
+            dists_A_to_B_coarse, _ = self.tree_B.query(self.coords_A)
+            interaction_mask = dists_A_to_B_coarse < 8.0
+            candidate_indices = np.where(on_patch_mask & interaction_mask)[0]
+        else:
+            candidate_indices = []
+
+        residue_data = {}
+        for idx in candidate_indices:
+            atom_A = self.atoms_A[idx]
+            parent = atom_A.get_parent()
+            res_id = parent.get_id()
+            res_seq = res_id[1]
+
+            u, v = uv[vertex_indices[idx]]
+            if res_id not in residue_data:
+                residue_data[res_id] = {'uvs': [], 'types': set(), 'partners': {}}
+            residue_data[res_id]['uvs'].append([u, v])
+            partner_counts = residue_data[res_id]['partners']
+            if self.arpeggio_data is not None:
+                for p_seq, p_count in self.arpeggio_partners.get(res_seq, {}).items():
+                    partner_counts[p_seq] = partner_counts.get(p_seq, 0) + p_count
+            elif self.atoms_B and self.tree_B:
+                nearby_partner_indices = self.tree_B.query_ball_point(self.coords_A[idx], r=6.0)
+                for b_idx in nearby_partner_indices:
+                    b_seq = self.atoms_B[b_idx].get_parent().get_id()[1]
+                    partner_counts[b_seq] = partner_counts.get(b_seq, 0) + 1
+
+            if include_types:
+                if self.arpeggio_data is not None and res_seq in self.arpeggio_data:
+                    residue_data[res_id]['types'].update(self.arpeggio_data[res_seq])
+                elif self.atoms_B and self.tree_B:
+                    nearby_b_indices = self.tree_B.query_ball_point(self.coords_A[idx], r=6.0)
+                    for b_idx in nearby_b_indices:
+                        dist = np.linalg.norm(self.coords_A[idx] - self.coords_B[b_idx])
+                        i_type = self._get_interaction_type_heuristic(atom_A, self.atoms_B[b_idx], dist)
+                        if i_type:
+                            residue_data[res_id]['types'].add(i_type)
+                            b_seq = self.atoms_B[b_idx].get_parent().get_id()[1]
+                            partner_counts[b_seq] = partner_counts.get(b_seq, 0) + 1
+        return residue_data
+
+    def count_patch_points(self, patch):
+        uv = patch.metadata.get('uv_global')
+        if uv is None:
+            uv = patch.metadata.get('uv')
+        if uv is None:
+            return 0
+        residue_data = self._collect_patch_residue_data(patch, uv, include_types=False)
+        return len(residue_data)
 
     def _relax_labels(self, ax, label_records, max_iter=80):
         fig = ax.figure
