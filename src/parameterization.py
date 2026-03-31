@@ -145,10 +145,9 @@ class Parameterizer:
                 uv = ret
 
             # Handle numpy/bool ambiguity for success flags.
-            if isinstance(success, np.ndarray):
-                is_success = bool(success.all())
-            else:
-                is_success = bool(success)
+            # Convert scalars, lists, and array-like wrappers (e.g., Eigen proxies)
+            # to a NumPy array and reduce to a single truth value safely.
+            is_success = bool(np.all(np.asarray(success)))
 
             # Some bindings return only UV (with no success flag), so accept
             # a valid UV array even if success parsing is uncertain.
