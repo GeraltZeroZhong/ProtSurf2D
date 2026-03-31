@@ -111,6 +111,7 @@ class TopologyManager:
             # Remove triangles adjacent to non-manifold edges (edge incidence > 2).
             # LSCM expects a 2-manifold patch; these faces make the linear system ill-posed.
             self._remove_nonmanifold_faces(mesh)
+            self._remove_nonmanifold_vertices(mesh)
 
             # Keep the largest connected component after sanitation.
             components = mesh.split(only_watertight=False)
@@ -147,8 +148,82 @@ class TopologyManager:
         manifold_face_mask = np.all(face_edge_counts <= 2, axis=1)
 
         if not np.all(manifold_face_mask):
+            removed_faces = int(np.count_nonzero(~manifold_face_mask))
             mesh.update_faces(manifold_face_mask)
             mesh.remove_unreferenced_vertices()
+            logger.warning(f"Removed {removed_faces} faces adjacent to non-manifold edges.")
+
+    @staticmethod
+    def _remove_nonmanifold_vertices(mesh: trimesh.Trimesh):
+        """
+        Remove faces around non-manifold vertices.
+
+        A manifold vertex should have one connected fan ("umbrella") of incident faces.
+        If incident faces split into multiple disconnected fans around one vertex, the
+        vertex is non-manifold and tends to break boundary-loop extraction in libigl.
+        """
+        if len(mesh.faces) == 0:
+            return
+
+        faces = mesh.faces
+        faces_per_vertex = [[] for _ in range(len(mesh.vertices))]
+        for fi, tri in enumerate(faces):
+            faces_per_vertex[tri[0]].append(fi)
+            faces_per_vertex[tri[1]].append(fi)
+            faces_per_vertex[tri[2]].append(fi)
+
+        nonmanifold_vertices = set()
+        for v_idx, incident in enumerate(faces_per_vertex):
+            if len(incident) <= 1:
+                continue
+
+            incident_set = set(incident)
+            local_adj = {fi: [] for fi in incident}
+            for fi in incident:
+                tri_i = set(faces[fi])
+                tri_i.discard(v_idx)
+                for fj in incident:
+                    if fi >= fj:
+                        continue
+                    tri_j = set(faces[fj])
+                    tri_j.discard(v_idx)
+                    # Two incident faces are connected in the umbrella if they share
+                    # the edge that also contains v_idx (i.e., one non-v vertex shared).
+                    if len(tri_i.intersection(tri_j)) == 1:
+                        local_adj[fi].append(fj)
+                        local_adj[fj].append(fi)
+
+            # Count connected components of incident-face fan graph.
+            seen = set()
+            components = 0
+            for fi in incident:
+                if fi in seen:
+                    continue
+                components += 1
+                stack = [fi]
+                seen.add(fi)
+                while stack:
+                    cur = stack.pop()
+                    for nei in local_adj[cur]:
+                        if nei in incident_set and nei not in seen:
+                            seen.add(nei)
+                            stack.append(nei)
+
+            if components > 1:
+                nonmanifold_vertices.add(v_idx)
+
+        if nonmanifold_vertices:
+            old_face_count = len(faces)
+            keep_faces = ~np.any(np.isin(faces, list(nonmanifold_vertices)), axis=1)
+            mesh.update_faces(keep_faces)
+            mesh.remove_unreferenced_vertices()
+            removed_faces = old_face_count - len(mesh.faces)
+            preview = sorted(nonmanifold_vertices)[:8]
+            logger.warning(
+                "Removed non-manifold umbrella vertices: "
+                f"count={len(nonmanifold_vertices)}, removed_faces={removed_faces}, "
+                f"sample_vertex_ids={preview}."
+            )
 
 # --- Self-Contained Unit Test ---
 if __name__ == "__main__":
