@@ -438,8 +438,12 @@ class InterfaceVisualizer:
             uv = patch.metadata.get('uv')
         if uv is None:
             return 0
-        residue_data = self._collect_patch_residue_data(patch, uv, include_types=False)
-        return len(residue_data)
+        residue_data = self._collect_patch_residue_data(patch, uv, include_types=True)
+        interacting_residue_count = 0
+        for data in residue_data.values():
+            if data.get('types'):
+                interacting_residue_count += 1
+        return interacting_residue_count
 
     def _relax_labels(self, ax, label_records, max_iter=80):
         fig = ax.figure
