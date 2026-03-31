@@ -26,6 +26,8 @@ class InterfaceVisualizer:
         self.coords_A = chain_A_coords
         self.coords_B = chain_B_coords
         self.atoms_B = chain_B_atoms
+        self.residue_lookup_A = self._build_residue_lookup(self.atoms_A)
+        self.residue_lookup_B = self._build_residue_lookup(self.atoms_B) if self.atoms_B else {}
         
         # Only build tree if we don't have external interaction data
         self.tree_B = KDTree(self.coords_B) if not arpeggio_file else None
@@ -82,6 +84,7 @@ class InterfaceVisualizer:
 
         # Data store: { (res_seq, res_name): set([interaction_types]) }
         self.arpeggio_data = None
+        self.arpeggio_partners = {}
         
         if arpeggio_file and os.path.exists(arpeggio_file):
             self._load_arpeggio_data(arpeggio_file)
@@ -98,6 +101,35 @@ class InterfaceVisualizer:
         self.anion_atoms = {'OD1', 'OD2', 'OE1', 'OE2', 'OXT'} 
         self.polar_atoms = {'N', 'O', 'S', 'F'}
         self.sulfur_atoms = {'SG', 'SD'}
+
+    def _build_residue_lookup(self, atoms):
+        lookup = {}
+        if not atoms:
+            return lookup
+        for atom in atoms:
+            parent = atom.get_parent()
+            seq = parent.get_id()[1]
+            if seq not in lookup:
+                lookup[seq] = parent.get_resname()
+        return lookup
+
+    def _format_residue_label(self, res_name, res_seq):
+        if res_name:
+            return f"{str(res_name).title()}{res_seq}"
+        return str(res_seq)
+
+    def _build_label_text(self, mode, res_a_seq, res_a_name, partner_counts):
+        a_label = self._format_residue_label(res_a_name, res_a_seq)
+        if mode == 'chain_a':
+            return a_label
+        if not partner_counts:
+            return a_label if mode == 'pair' else "N/A"
+        best_b_seq = max(partner_counts.items(), key=lambda item: item[1])[0]
+        b_name = self.residue_lookup_B.get(best_b_seq, "UNK")
+        b_label = self._format_residue_label(b_name, best_b_seq)
+        if mode == 'chain_b':
+            return b_label
+        return f"{a_label}-{b_label}"
 
     def _extract_seq_num(self, val):
         """Robustly extract integer sequence number from strings like '100', '100A'."""
@@ -118,6 +150,7 @@ class InterfaceVisualizer:
                 data = json.load(f)
             
             temp_data = {}
+            partner_data = {}
             count = 0
             seen_pairs = set()
             found_raw_types = set() 
@@ -143,13 +176,17 @@ class InterfaceVisualizer:
                 
                 if c1 == self.chain_a_id:
                     res_info = bgn
+                    partner_info = end
                 else:
                     res_info = end
+                    partner_info = bgn
                 
                 raw_seq = res_info.get("auth_seq_id")
                 res_seq = self._extract_seq_num(raw_seq)
                 if res_seq is None:
                     continue
+                raw_partner_seq = partner_info.get("auth_seq_id")
+                partner_seq = self._extract_seq_num(raw_partner_seq)
                 
                 raw_type = item.get("type") 
                 if isinstance(raw_type, list): raw_types = raw_type
@@ -167,6 +204,10 @@ class InterfaceVisualizer:
                 key = res_seq
                 if key not in temp_data: temp_data[key] = set()
                 temp_data[key].update(mapped_types)
+                if partner_seq is not None:
+                    if key not in partner_data:
+                        partner_data[key] = {}
+                    partner_data[key][partner_seq] = partner_data[key].get(partner_seq, 0) + 1
                 count += 1
             
             if count == 0:
@@ -183,6 +224,7 @@ class InterfaceVisualizer:
             else:
                 logger.info(f"Loaded {count} Arpeggio interactions for Chain {self.chain_a_id}.")
                 self.arpeggio_data = temp_data
+                self.arpeggio_partners = partner_data
             
         except Exception as e:
             logger.error(f"Failed to load Arpeggio JSON: {e}")
@@ -235,7 +277,9 @@ class InterfaceVisualizer:
         self.artist_map = {}
         style = {
             'color': 'red', 'font_family': 'sans-serif', 'font_size': 9, 
-            'color_by_type': False, 'active_types': self.interaction_types
+            'color_by_type': False, 'active_types': self.interaction_types,
+            'show_labels': True, 'label_mode': 'chain_a', 'avoid_label_overlap': True,
+            'label_offsets': {}
         }
         if style_config: style.update(style_config)
 
@@ -295,8 +339,17 @@ class InterfaceVisualizer:
             res_seq = res_id[1]
             
             u, v = uv[vertex_indices[idx]]
-            if res_id not in residue_data: residue_data[res_id] = {'uvs': [], 'types': set()}
+            if res_id not in residue_data: residue_data[res_id] = {'uvs': [], 'types': set(), 'partners': {}}
             residue_data[res_id]['uvs'].append([u, v])
+            partner_counts = residue_data[res_id]['partners']
+            if self.arpeggio_data is not None:
+                for p_seq, p_count in self.arpeggio_partners.get(res_seq, {}).items():
+                    partner_counts[p_seq] = partner_counts.get(p_seq, 0) + p_count
+            elif self.atoms_B and self.tree_B:
+                nearby_partner_indices = self.tree_B.query_ball_point(self.coords_A[idx], r=6.0)
+                for b_idx in nearby_partner_indices:
+                    b_seq = self.atoms_B[b_idx].get_parent().get_id()[1]
+                    partner_counts[b_seq] = partner_counts.get(b_seq, 0) + 1
             
             if style['color_by_type']:
                 if self.arpeggio_data is not None:
@@ -308,7 +361,12 @@ class InterfaceVisualizer:
                         for b_idx in nearby_b_indices:
                             dist = np.linalg.norm(self.coords_A[idx] - self.coords_B[b_idx])
                             i_type = self._get_interaction_type_heuristic(atom_A, self.atoms_B[b_idx], dist)
-                            if i_type: residue_data[res_id]['types'].add(i_type)
+                            if i_type:
+                                residue_data[res_id]['types'].add(i_type)
+                                b_seq = self.atoms_B[b_idx].get_parent().get_id()[1]
+                                partner_counts[b_seq] = partner_counts.get(b_seq, 0) + 1
+
+        label_records = []
 
         for res_id, data in residue_data.items():
             uv_array = np.array(data['uvs'])
@@ -336,19 +394,77 @@ class InterfaceVisualizer:
             chain_obj = self.atoms_A[0].get_parent().get_parent()
             try:
                 res_obj = chain_obj[res_id]
-                res_name = f"{res_obj.get_resname()}{res_id[1]}"
+                res_name = res_obj.get_resname()
             except KeyError:
-                 res_name = f"{res_id[1]}"
+                 res_name = "UNK"
+            label_text = self._build_label_text(
+                style.get('label_mode', 'chain_a'),
+                res_id[1],
+                res_name,
+                data.get('partners', {})
+            )
+            res_name_for_id = self._format_residue_label(res_name, res_id[1])
 
-            uid = f"{patch_id}_{res_name}"
+            uid = f"{patch_id}_{res_name_for_id}"
             
             sc = ax.scatter(u_center, v_center, c=final_color, s=80, edgecolors='white', zorder=10, picker=5)
             sc.set_gid(uid)
-            txt = ax.text(u_center, v_center + 0.04, res_name, fontsize=style['font_size'], 
-                          fontname=style['font_family'], ha='center', fontweight='bold', color='darkred', picker=True)
-            txt.set_gid(uid)
-            self.artist_map[uid] = {'scatter': sc, 'text': txt}
+            txt = None
+            connector = None
+            if style.get('show_labels', True):
+                default_pos = (u_center, v_center + 0.04)
+                offset = style.get('label_offsets', {}).get(uid, (0.0, 0.0))
+                text_pos = (default_pos[0] + offset[0], default_pos[1] + offset[1])
+                txt = ax.text(text_pos[0], text_pos[1], label_text, fontsize=style['font_size'], 
+                              fontname=style['font_family'], ha='center', fontweight='bold', color='darkred', zorder=20)
+                txt.set_gid(uid)
+                connector, = ax.plot([u_center, text_pos[0]], [v_center, text_pos[1]], linestyle=(0, (2, 2)),
+                                     color='dimgray', lw=0.8, alpha=0.8, zorder=6)
+                label_records.append({'text': txt, 'scatter': sc, 'connector': connector})
+            self.artist_map[uid] = {'scatter': sc, 'text': txt, 'connector': connector}
+
+        if style.get('show_labels', True) and style.get('avoid_label_overlap', True) and label_records:
+            self._relax_labels(ax, label_records)
 
         center = uv.mean(axis=0)
         ax.text(center[0], center[1], f"P{patch_id}", fontsize=8, color='black', alpha=0.6)
         return found_types
+
+    def _relax_labels(self, ax, label_records, max_iter=80):
+        fig = ax.figure
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        for _ in range(max_iter):
+            moved = False
+            bboxes = [rec['text'].get_window_extent(renderer=renderer).expanded(1.05, 1.1) for rec in label_records]
+            for i in range(len(label_records)):
+                for j in range(i + 1, len(label_records)):
+                    b1, b2 = bboxes[i], bboxes[j]
+                    if not b1.overlaps(b2):
+                        continue
+                    moved = True
+                    dx = min(b1.x1 - b2.x0, b2.x1 - b1.x0) * 0.5
+                    dy = min(b1.y1 - b2.y0, b2.y1 - b1.y0) * 0.5
+                    sign_x = 1 if b1.x0 <= b2.x0 else -1
+                    sign_y = 1 if b1.y0 <= b2.y0 else -1
+                    self._move_text_display(ax, label_records[i]['text'], -sign_x * dx, -sign_y * dy)
+                    self._move_text_display(ax, label_records[j]['text'], sign_x * dx, sign_y * dy)
+
+            if not moved:
+                break
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+
+        for rec in label_records:
+            pt = rec['scatter'].get_offsets()[0]
+            tx, ty = rec['text'].get_position()
+            if rec.get('connector') is not None:
+                rec['connector'].set_data([pt[0], tx], [pt[1], ty])
+
+    def _move_text_display(self, ax, txt, dx, dy):
+        cur_data = txt.get_position()
+        cur_disp = ax.transData.transform(cur_data)
+        new_disp = (cur_disp[0] + dx, cur_disp[1] + dy)
+        new_data = ax.transData.inverted().transform(new_disp)
+        txt.set_position((new_data[0], new_data[1]))
