@@ -4,7 +4,10 @@ import os
 import time
 import logging
 import subprocess
-import gemmi
+try:
+    import gemmi
+except ImportError:
+    gemmi = None
 
 # Ensure src is in python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -13,6 +16,7 @@ from src.io_loader import PDBLoader
 from src.surface import SurfaceGenerator
 from src.topology import TopologyManager
 from src.parameterization import Parameterizer
+from src.uv_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
 from src.visualizer import InterfaceVisualizer
 
 def setup_logging(verbose=False):
@@ -29,6 +33,9 @@ def generate_arpeggio_interactions(pdb_path, logger):
     Matches logic in gui.py.
     """
     logger.info("Checking Arpeggio requirements...")
+    if gemmi is None:
+        logger.warning("Gemmi is not installed; skip Arpeggio auto-generation.")
+        return None
     
     pdb_dir = os.path.dirname(os.path.abspath(pdb_path))
     pdb_name = os.path.splitext(os.path.basename(pdb_path))[0]
@@ -144,6 +151,11 @@ def main():
     parser.add_argument("--res", type=float, default=1.0, help="Grid resolution for surface generation (Angstroms)")
     parser.add_argument("--sigma", type=float, default=1.5, help="Gaussian smoothing sigma")
     parser.add_argument("--output", "-o", default="interface_map.png", help="Output image filename")
+    parser.add_argument("--enable-joint-opt", action="store_true", help="Enable joint global UV optimization")
+    parser.add_argument("--disable-optcuts", action="store_true", help="Disable external OptCuts binary call")
+    parser.add_argument("--optcuts-bin", default="OptCuts_bin", help="Path/name for OptCuts executable")
+    parser.add_argument("--overlap-weight", type=float, default=1.0, help="Overlap penalty weight for joint UV optimization")
+    parser.add_argument("--uv-max-iter", type=int, default=60, help="Max iterations for joint UV optimization")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
     
     args = parser.parse_args()
@@ -213,7 +225,20 @@ def main():
         logger.error("All patches failed to parameterize.")
         sys.exit(1)
 
-    # --- Step 5: Visualization ---
+    # --- Step 5: Joint UV Optimization ---
+    logger.info("Running global UV layout optimization...")
+    optimizer = OptCutsUVOptimizer(
+        UVOptimizerConfig(
+            enabled=args.enable_joint_opt,
+            use_optcuts=not args.disable_optcuts,
+            optcuts_bin=args.optcuts_bin,
+            overlap_weight=args.overlap_weight,
+            max_iterations=args.uv_max_iter
+        )
+    )
+    valid_patches = optimizer.optimize_patches(valid_patches)
+
+    # --- Step 6: Visualization ---
     logger.info("Visualizing results...")
     
     # Updated signature to support Arpeggio
