@@ -33,12 +33,26 @@ class Parameterizer:
             # This is crucial for LSCM which requires a single connected component.
             mesh.merge_vertices()
 
-            # 2. Remove degenerate faces (area approx 0)
-            valid_faces = mesh.area_faces > 1e-12
+            # 2. Fill tiny holes so the selected boundary is truly an outer disk boundary.
+            # Without this, keeping only the longest boundary loop still leaves inner holes,
+            # and LSCM can fail with singular systems.
+            trimesh.repair.fill_holes(mesh)
+
+            # 3. Remove degenerate/sliver faces.
+            # Marching Cubes can produce faces with non-zero area but pathological shape.
+            # These make cotangent Laplacians ill-conditioned for LSCM.
+            valid_faces = Parameterizer._face_quality_mask(
+                np.ascontiguousarray(mesh.vertices, dtype=np.float64),
+                np.ascontiguousarray(mesh.faces, dtype=np.int64),
+                mesh.area_faces,
+                min_area=1e-5,
+                min_angle_deg=2.0,
+                max_aspect_ratio=50.0,
+            )
             if not np.all(valid_faces):
                 mesh.update_faces(valid_faces)
             
-            # 3. Safe remove duplicate faces (Fix for AttributeError on older trimesh versions)
+            # 4. Safe remove duplicate faces (Fix for AttributeError on older trimesh versions)
             if hasattr(mesh, 'remove_duplicate_faces'):
                 mesh.remove_duplicate_faces()
             else:
@@ -47,10 +61,10 @@ class Parameterizer:
                 # If method is missing, we trust merge_vertices did enough.
                 pass
 
-            # 4. Remove unused vertices (Critical so indices match 0..N-1 for IGL)
+            # 5. Remove unused vertices (Critical so indices match 0..N-1 for IGL)
             mesh.remove_unreferenced_vertices()
             
-            # 5. Component Check: Ensure we really have one connected component
+            # 6. Component Check: Ensure we really have one connected component
             # Sometimes 'remove_degenerate_faces' can disconnect the mesh.
             # LSCM cannot handle multiple disconnected components in one call.
             components = mesh.split(only_watertight=False)
@@ -92,25 +106,17 @@ class Parameterizer:
         # Handle libigl return variants robustly:
         # - flat loop: [i0, i1, ...]
         # - nested loops for multiple holes: [[...], (...), np.ndarray(...), ...]
-        # Some bindings can return tuples or mixed sequence wrappers.
-        if len(bnd) > 0:
-            first_item = bnd[0]
-            is_scalar_first = np.isscalar(first_item)
-            is_nested = (not is_scalar_first) and hasattr(first_item, "__iter__")
-
-            if is_nested:
-                loops = []
-                for loop in bnd:
-                    if np.isscalar(loop) or not hasattr(loop, "__iter__"):
-                        continue
-                    loop_arr = np.asarray(loop).reshape(-1)
-                    if loop_arr.size > 0:
-                        loops.append(loop_arr)
-
-                if loops:
-                    # Heuristic: Pick the longest boundary loop (the "outer" one).
-                    # Shorter loops are usually internal holes.
-                    bnd = max(loops, key=lambda x: x.size)
+        # We keep only the longest loop after mesh hole filling as a final safeguard.
+        if len(bnd) > 0 and not np.isscalar(bnd[0]) and hasattr(bnd[0], "__iter__"):
+            loops = []
+            for loop in bnd:
+                if np.isscalar(loop) or not hasattr(loop, "__iter__"):
+                    continue
+                loop_arr = np.asarray(loop).reshape(-1)
+                if loop_arr.size > 0:
+                    loops.append(loop_arr)
+            if loops:
+                bnd = max(loops, key=lambda x: x.size)
 
         # Delay strict dtype conversion until we are sure `bnd` is a single flat loop.
         bnd = np.asarray(bnd).reshape(-1)
@@ -121,13 +127,10 @@ class Parameterizer:
             return None
 
         # 3. Fix Boundary Conditions for LSCM
-        # Strategy: Pin the two most distant points on the boundary.
+        # Strategy: Pin two topologically opposite points on the boundary ring.
+        # This avoids weak constraints on curled "C"-like boundaries.
         b1_idx = bnd[0]
-        
-        # Find point on boundary furthest from A (Euclidean distance)
-        boundary_coords = v[bnd]
-        dists = np.linalg.norm(boundary_coords - v[b1_idx], axis=1)
-        b2_idx = bnd[np.argmax(dists)]
+        b2_idx = bnd[len(bnd) // 2]
         
         # Constraints inputs: b (indices), bc (target coords)
         # Keep indices int32 for libigl MatrixXi compatibility.
@@ -177,6 +180,11 @@ class Parameterizer:
             else:
                 logger.warning("IGL LSCM solver returned failure status (Matrix likely singular).")
 
+        except (ValueError, TypeError) as e:
+            # Some binding-level failures throw ragged-array conversion errors
+            # before robust tuple/array inspection can happen.
+            logger.warning(f"LSCM returned non-rectangular/invalid output: {e}")
+            uv_normalized = None
         except Exception as e:
             logger.warning(f"LSCM Exception: {e}")
 
@@ -218,6 +226,46 @@ class Parameterizer:
         scale = uv_max - uv_min
         scale[scale < 1e-6] = 1.0 
         return (uv - uv_min) / scale
+
+    @staticmethod
+    def _face_quality_mask(vertices, faces, area_faces, min_area=1e-5, min_angle_deg=2.0, max_aspect_ratio=50.0):
+        """
+        Build a robust per-face validity mask using:
+        1) area threshold
+        2) minimal angle threshold
+        3) maximal edge aspect-ratio threshold
+        """
+        if len(faces) == 0:
+            return np.array([], dtype=bool)
+
+        v0 = vertices[faces[:, 0]]
+        v1 = vertices[faces[:, 1]]
+        v2 = vertices[faces[:, 2]]
+
+        e01 = np.linalg.norm(v1 - v0, axis=1)
+        e12 = np.linalg.norm(v2 - v1, axis=1)
+        e20 = np.linalg.norm(v0 - v2, axis=1)
+
+        edges = np.stack([e01, e12, e20], axis=1)
+        max_edge = edges.max(axis=1)
+        min_edge = edges.min(axis=1)
+        aspect_ratio = max_edge / np.maximum(min_edge, 1e-12)
+
+        # Triangle angles from law of cosines.
+        a2 = e12 * e12  # opposite v0
+        b2 = e20 * e20  # opposite v1
+        c2 = e01 * e01  # opposite v2
+
+        cos0 = (b2 + c2 - a2) / np.maximum(2.0 * e20 * e01, 1e-12)
+        cos1 = (a2 + c2 - b2) / np.maximum(2.0 * e12 * e01, 1e-12)
+        cos2 = (a2 + b2 - c2) / np.maximum(2.0 * e12 * e20, 1e-12)
+        cos_stack = np.clip(np.stack([cos0, cos1, cos2], axis=1), -1.0, 1.0)
+        min_angle = np.degrees(np.arccos(cos_stack)).min(axis=1)
+
+        area_ok = area_faces > min_area
+        aspect_ok = aspect_ratio < max_aspect_ratio
+        angle_ok = min_angle >= min_angle_deg
+        return area_ok & aspect_ok & angle_ok
 
 # --- Self-Contained Unit Test ---
 if __name__ == "__main__":
