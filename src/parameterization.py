@@ -77,7 +77,9 @@ class Parameterizer:
         # IGL is strict about types. Ensure correct C++ compatible types.
         # Use np.ascontiguousarray to strip Trimesh wrappers and ensure C-order.
         v = np.ascontiguousarray(mesh.vertices, dtype=np.float64)
-        f = np.ascontiguousarray(mesh.faces, dtype=np.int64)
+        # libigl python bindings typically expect MatrixXi-compatible int32.
+        # int64 indices can cause binding-level dtype mismatch and unstable behavior.
+        f = np.ascontiguousarray(mesh.faces, dtype=np.int32)
 
         # 2. Find Boundary Loop (LSCM needs a boundary)
         # igl.boundary_loop returns the ordered vertex indices of the boundary
@@ -93,7 +95,7 @@ class Parameterizer:
             # Short loops are likely internal holes; LSCM can handle them as free boundaries.
             bnd = sorted(bnd, key=lambda x: len(x), reverse=True)[0]
         
-        bnd = np.array(bnd, dtype=np.int64)
+        bnd = np.array(bnd, dtype=np.int32)
 
         if len(bnd) < 3:
             logger.error("Mesh has no valid boundary (closed or degenerate).")
@@ -109,34 +111,54 @@ class Parameterizer:
         b2_idx = bnd[np.argmax(dists)]
         
         # Constraints inputs: b (indices), bc (target coords)
-        # FIX: Ensure 'b' is also int64 to match 'f'
-        b = np.array([b1_idx, b2_idx], dtype=np.int64)
+        # Keep indices int32 for libigl MatrixXi compatibility.
+        b = np.array([b1_idx, b2_idx], dtype=np.int32)
         bc = np.array([[0.0, 0.0], [1.0, 0.0]], dtype=np.float64)
 
         # 4. Run LSCM
         uv_normalized = None
         try:
-            # IGL LSCM signature: lscm(V, F, b, bc) -> (success, UV)
+            # Python libigl bindings are inconsistent across versions:
+            # - some return (success, uv)
+            # - some return (uv, success)
+            # - some return uv only
             ret = igl.lscm(v, f, b, bc)
-            
-            # Robust unpacking for different libigl versions
+
+            success = True
+            uv = None
+
             if isinstance(ret, tuple) and len(ret) == 2:
-                success, uv = ret
+                a, b_ret = ret
+
+                # Identify UV output by array shape (N,2) where N = #V.
+                if isinstance(a, np.ndarray) and a.ndim == 2 and a.shape[1] == 2 and a.shape[0] == v.shape[0]:
+                    uv = a
+                    success = b_ret
+                elif isinstance(b_ret, np.ndarray) and b_ret.ndim == 2 and b_ret.shape[1] == 2 and b_ret.shape[0] == v.shape[0]:
+                    uv = b_ret
+                    success = a
+                else:
+                    # Last resort: keep prior behavior but guard against bad types.
+                    success = a
+                    uv = b_ret
             else:
-                success = True
                 uv = ret
 
-            # Handle numpy/bool ambiguity
+            # Handle numpy/bool ambiguity for success flags.
             if isinstance(success, np.ndarray):
-                is_success = success.all()
+                is_success = bool(success.all())
             else:
                 is_success = bool(success)
-            
-            if is_success:
+
+            # Some bindings return only UV (with no success flag), so accept
+            # a valid UV array even if success parsing is uncertain.
+            has_valid_uv = isinstance(uv, np.ndarray) and uv.ndim == 2 and uv.shape[0] == v.shape[0] and uv.shape[1] == 2
+
+            if is_success or has_valid_uv:
                 uv_normalized = Parameterizer._normalize_uv(uv)
             else:
                 logger.warning("IGL LSCM solver returned failure status (Matrix likely singular).")
-                
+
         except Exception as e:
             logger.warning(f"LSCM Exception: {e}")
 
@@ -155,8 +177,8 @@ class Parameterizer:
         """
         try:
             # 1. Map boundary vertices to a circle
-            # Ensure bnd is int64
-            bnd = bnd.astype(np.int64)
+            # Ensure bnd is int32
+            bnd = bnd.astype(np.int32)
             bnd_uv = igl.map_vertices_to_circle(v, bnd)
             
             # 2. Harmonic parameterization (power=1)

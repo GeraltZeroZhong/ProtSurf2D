@@ -1,6 +1,5 @@
 import numpy as np
 import trimesh
-import trimesh.smoothing  # Explicit import required for smoothing functions
 from scipy.spatial import KDTree
 import logging
 
@@ -93,7 +92,7 @@ class TopologyManager:
 
     def _sanitize_patch(self, mesh: trimesh.Trimesh):
         """
-        Clean and smooth a single patch to prepare it for parameterization.
+        Clean a single patch to prepare it for parameterization.
         """
         try:
             # Remove vertices not used in any face
@@ -108,32 +107,48 @@ class TopologyManager:
                 logger.warning(f"Skipping degenerate face removal due to: {e}")
             
             mesh.merge_vertices()
-            
-            # --- CRITICAL FIX: Safe Smoothing ---
-            # Open surfaces (sheets) have undefined volume. 
-            # trimesh's default smoothing tries to preserve volume, causing NaNs.
-            # We must backup vertices and check for NaNs after smoothing.
-            original_vertices = mesh.vertices.copy()
-            
-            try:
-                # Attempt smoothing
-                trimesh.smoothing.filter_laplacian(mesh, iterations=5)
-                
-                # Check for NaNs
-                if not np.isfinite(mesh.vertices).all():
-                    raise ValueError("Smoothing produced NaNs (likely due to open surface volume calculation).")
-                    
-            except Exception as e:
-                logger.warning(f"Smoothing failed, reverting to unsmoothed mesh: {e}")
-                # Revert to safe backup
-                mesh.vertices = original_vertices
-            
+
+            # Remove triangles adjacent to non-manifold edges (edge incidence > 2).
+            # LSCM expects a 2-manifold patch; these faces make the linear system ill-posed.
+            self._remove_nonmanifold_faces(mesh)
+
+            # Keep the largest connected component after sanitation.
+            components = mesh.split(only_watertight=False)
+            if len(components) > 1:
+                largest = max(components, key=lambda m: len(m.vertices))
+                mesh.vertices = largest.vertices.copy()
+                mesh.faces = largest.faces.copy()
+                mesh.remove_unreferenced_vertices()
+
+            # IMPORTANT: do not forcibly smooth open boundary patches.
+            # Laplacian smoothing can shrink boundaries and create self-intersections/
+            # near-zero-area triangles, which destabilize LSCM.
             return mesh
             
         except Exception as e:
             logger.error(f"Error sanitizing patch: {e}")
             logger.warning("Returning partially sanitized patch due to error.")
             return mesh
+
+    @staticmethod
+    def _remove_nonmanifold_faces(mesh: trimesh.Trimesh):
+        """
+        Remove faces that touch non-manifold edges (shared by >2 faces).
+        """
+        if len(mesh.faces) == 0:
+            return
+
+        edges = mesh.edges_sorted
+        unique_edges, inverse = np.unique(edges, axis=0, return_inverse=True)
+        edge_counts = np.bincount(inverse, minlength=len(unique_edges))
+
+        # Each face contributes 3 consecutive edges in mesh.edges_sorted.
+        face_edge_counts = edge_counts[inverse].reshape(-1, 3)
+        manifold_face_mask = np.all(face_edge_counts <= 2, axis=1)
+
+        if not np.all(manifold_face_mask):
+            mesh.update_faces(manifold_face_mask)
+            mesh.remove_unreferenced_vertices()
 
 # --- Self-Contained Unit Test ---
 if __name__ == "__main__":
