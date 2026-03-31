@@ -2,6 +2,7 @@ import numpy as np
 import igl
 import trimesh
 import logging
+import importlib.metadata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("LSCM")
@@ -11,6 +12,7 @@ class Parameterizer:
     Handles the flattening of 3D meshes into 2D UV coordinates using LSCM
     (Least Squares Conformal Maps), with a Harmonic fallback.
     """
+    _lscm_runtime_logged = False
     
     @staticmethod
     def flatten_patch(mesh: trimesh.Trimesh) -> np.ndarray:
@@ -96,16 +98,35 @@ class Parameterizer:
         f = np.ascontiguousarray(mesh.faces, dtype=np.int32)
 
         # Topology gate before LSCM: a valid open disk patch should satisfy
-        # Euler characteristic chi = V - E + F = 1.
-        chi, n_edges = Parameterizer._euler_characteristic(f, len(v))
+        # Euler characteristic chi = V - E + F = 1, and have exactly one boundary loop.
+        chi, n_edges, n_boundary_loops = Parameterizer._topology_stats(f, len(v))
         logger.info(
             "Euler topology stats before LSCM: "
-            f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi} (expected chi=1 for disk-like patch)."
+            f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi}, boundary_loops={n_boundary_loops} "
+            "(expected chi=1 and boundary_loops=1 for disk-like patch)."
         )
-        if chi != 1:
+        if chi != 1 or n_boundary_loops != 1:
+            logger.warning(
+                "Patch not disk-like; attempting diskification before LSCM."
+            )
+            disk_mesh = Parameterizer._extract_largest_disk_region(mesh)
+            if disk_mesh is not None and len(disk_mesh.faces) > 0:
+                mesh.vertices = disk_mesh.vertices.copy()
+                mesh.faces = disk_mesh.faces.copy()
+                mesh.remove_unreferenced_vertices()
+                v = np.ascontiguousarray(mesh.vertices, dtype=np.float64)
+                f = np.ascontiguousarray(mesh.faces, dtype=np.int32)
+                chi, n_edges, n_boundary_loops = Parameterizer._topology_stats(f, len(v))
+                logger.info(
+                    "Euler topology stats after diskification: "
+                    f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi}, boundary_loops={n_boundary_loops}."
+                )
+
+        if chi != 1 or n_boundary_loops != 1:
             logger.warning(
                 "Euler characteristic gate failed; "
-                f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi}. Skipping LSCM."
+                f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi}, boundary_loops={n_boundary_loops}. "
+                "Skipping LSCM."
             )
             return None
 
@@ -117,22 +138,7 @@ class Parameterizer:
             logger.error(f"Failed to detect boundary: {e}")
             return None
         
-        # Handle libigl return variants robustly:
-        # - flat loop: [i0, i1, ...]
-        # - nested loops for multiple holes: [[...], (...), np.ndarray(...), ...]
-        # We keep only the longest loop after mesh hole filling as a final safeguard.
-        if len(bnd) > 0 and not np.isscalar(bnd[0]) and hasattr(bnd[0], "__iter__"):
-            loops = []
-            for loop in bnd:
-                if np.isscalar(loop) or not hasattr(loop, "__iter__"):
-                    continue
-                loop_arr = np.asarray(loop).reshape(-1)
-                if loop_arr.size > 0:
-                    loops.append(loop_arr)
-            if loops:
-                bnd = max(loops, key=lambda x: x.size)
-
-        # Delay strict dtype conversion until we are sure `bnd` is a single flat loop.
+        # libigl 2.6.x returns one longest ordered boundary loop.
         bnd = np.asarray(bnd).reshape(-1)
         bnd = np.array(bnd, dtype=np.int32)
 
@@ -154,50 +160,27 @@ class Parameterizer:
         # 4. Run LSCM
         uv_normalized = None
         try:
-            # Python libigl bindings are inconsistent across versions:
-            # - some return (success, uv)
-            # - some return (uv, success)
-            # - some return uv only
-            ret = igl.lscm(v, f, b, bc)
+            if not Parameterizer._lscm_runtime_logged:
+                try:
+                    igl_version = importlib.metadata.version("libigl")
+                except Exception:
+                    igl_version = "unknown"
+                logger.info(f"LSCM runtime: libigl={igl_version}")
+                Parameterizer._lscm_runtime_logged = True
 
-            success = True
-            uv = None
-
-            if isinstance(ret, tuple) and len(ret) == 2:
-                a, b_ret = ret
-
-                # Identify UV output by array shape (N,2) where N = #V.
-                if isinstance(a, np.ndarray) and a.ndim == 2 and a.shape[1] == 2 and a.shape[0] == v.shape[0]:
-                    uv = a
-                    success = b_ret
-                elif isinstance(b_ret, np.ndarray) and b_ret.ndim == 2 and b_ret.shape[1] == 2 and b_ret.shape[0] == v.shape[0]:
-                    uv = b_ret
-                    success = a
-                else:
-                    # Last resort: keep prior behavior but guard against bad types.
-                    success = a
-                    uv = b_ret
-            else:
-                uv = ret
-
-            # Handle numpy/bool ambiguity for success flags.
-            # Convert scalars, lists, and array-like wrappers (e.g., Eigen proxies)
-            # to a NumPy array and reduce to a single truth value safely.
-            is_success = bool(np.all(np.asarray(success)))
-
-            # Some bindings return only UV (with no success flag), so accept
-            # a valid UV array even if success parsing is uncertain.
-            has_valid_uv = isinstance(uv, np.ndarray) and uv.ndim == 2 and uv.shape[0] == v.shape[0] and uv.shape[1] == 2
-
-            if is_success or has_valid_uv:
+            # libigl 2.6.x python bindings return (V_uv, Q) and raise RuntimeError on failure.
+            uv, _q = igl.lscm(v, f, b, bc)
+            has_valid_uv = isinstance(uv, np.ndarray) and uv.ndim == 2 and uv.shape == (v.shape[0], 2)
+            if has_valid_uv:
                 uv_normalized = Parameterizer._normalize_uv(uv)
             else:
-                logger.warning("IGL LSCM solver returned failure status (Matrix likely singular).")
+                logger.warning(
+                    "IGL LSCM returned unexpected UV shape: "
+                    f"{None if uv is None else getattr(uv, 'shape', type(uv))}"
+                )
 
-        except (ValueError, TypeError) as e:
-            # Some binding-level failures throw ragged-array conversion errors
-            # before robust tuple/array inspection can happen.
-            logger.warning(f"LSCM returned non-rectangular/invalid output: {e}")
+        except RuntimeError as e:
+            logger.warning(f"LSCM solver failed: {e}")
             uv_normalized = None
         except Exception as e:
             logger.warning(f"LSCM Exception: {e}")
@@ -299,6 +282,130 @@ class Parameterizer:
         n_edges = int(len(np.unique(edges, axis=0)))
         chi = int(n_vertices - n_edges + len(faces))
         return chi, n_edges
+
+    @staticmethod
+    def _topology_stats(faces, n_vertices):
+        """
+        Compute basic topology stats used for LSCM preflight.
+        Returns: (chi, n_edges, n_boundary_loops)
+        """
+        if len(faces) == 0:
+            return 0, 0, 0
+
+        edges = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+        edges = np.sort(edges, axis=1)
+        unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
+        n_edges = int(len(unique_edges))
+        chi = int(n_vertices - n_edges + len(faces))
+
+        boundary_edges = unique_edges[counts == 1]
+        if len(boundary_edges) == 0:
+            return chi, n_edges, 0
+        n_boundary_loops = Parameterizer._count_boundary_loops(boundary_edges)
+        return chi, n_edges, n_boundary_loops
+
+    @staticmethod
+    def _count_boundary_loops(boundary_edges):
+        """
+        Count connected boundary edge components (loops/chains).
+        """
+        adj = {}
+        for a, b in boundary_edges:
+            adj.setdefault(int(a), []).append(int(b))
+            adj.setdefault(int(b), []).append(int(a))
+
+        seen = set()
+        components = 0
+        for v in adj.keys():
+            if v in seen:
+                continue
+            components += 1
+            stack = [v]
+            seen.add(v)
+            while stack:
+                cur = stack.pop()
+                for nei in adj.get(cur, []):
+                    if nei not in seen:
+                        seen.add(nei)
+                        stack.append(nei)
+        return components
+
+    @staticmethod
+    def _extract_largest_disk_region(mesh: trimesh.Trimesh):
+        """
+        Heuristic diskification:
+        Grow connected face regions while preserving chi=1, then keep the largest such region.
+        This converts annulus/handle-like patches into a largest simply-connected disk subset.
+        """
+        faces = np.ascontiguousarray(mesh.faces, dtype=np.int32)
+        n_faces = len(faces)
+        if n_faces == 0:
+            return None
+
+        # Build edge -> faces map and face adjacency via shared edges.
+        edge_to_faces = {}
+        for fi, tri in enumerate(faces):
+            for e in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+                e = tuple(sorted((int(e[0]), int(e[1]))))
+                edge_to_faces.setdefault(e, []).append(fi)
+
+        neighbors = [set() for _ in range(n_faces)]
+        for f_ids in edge_to_faces.values():
+            if len(f_ids) == 2:
+                a, b = f_ids
+                neighbors[a].add(b)
+                neighbors[b].add(a)
+
+        best_set = set()
+        visited_seed = set()
+        for seed in range(n_faces):
+            if seed in visited_seed:
+                continue
+            # Mark this connected dual component as visited for seed iteration.
+            comp = set()
+            stack = [seed]
+            comp.add(seed)
+            while stack:
+                cur = stack.pop()
+                for nei in neighbors[cur]:
+                    if nei not in comp:
+                        comp.add(nei)
+                        stack.append(nei)
+            visited_seed.update(comp)
+
+            # Greedy region growth under chi=1 constraint.
+            region = {seed}
+            frontier = set(neighbors[seed])
+            while frontier:
+                cand = frontier.pop()
+                if cand in region:
+                    continue
+                trial_faces = np.array(sorted(region | {cand}), dtype=np.int32)
+                sub_f = faces[trial_faces]
+                unique_v = np.unique(sub_f.reshape(-1))
+                remap = -np.ones(int(np.max(unique_v)) + 1, dtype=np.int32)
+                remap[unique_v] = np.arange(len(unique_v), dtype=np.int32)
+                sub_f_local = remap[sub_f]
+                chi, _, loops = Parameterizer._topology_stats(sub_f_local, len(unique_v))
+                if chi == 1 and loops == 1:
+                    region.add(cand)
+                    frontier.update(neighbors[cand] - region)
+
+            if len(region) > len(best_set):
+                best_set = region
+
+        if len(best_set) < 3:
+            return None
+
+        kept_faces = faces[np.array(sorted(best_set), dtype=np.int32)]
+        unique_v = np.unique(kept_faces.reshape(-1))
+        new_vertices = np.asarray(mesh.vertices, dtype=np.float64)[unique_v]
+        remap = -np.ones(int(np.max(unique_v)) + 1, dtype=np.int32)
+        remap[unique_v] = np.arange(len(unique_v), dtype=np.int32)
+        new_faces = remap[kept_faces]
+        disk_mesh = trimesh.Trimesh(vertices=new_vertices, faces=new_faces, process=False)
+        disk_mesh.remove_unreferenced_vertices()
+        return disk_mesh
 
 # --- Self-Contained Unit Test ---
 if __name__ == "__main__":
