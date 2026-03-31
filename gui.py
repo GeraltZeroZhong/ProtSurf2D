@@ -8,7 +8,10 @@ import csv
 import subprocess
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import gemmi
+try:
+    import gemmi
+except ImportError:
+    gemmi = None
 
 # Ensure src is in python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -17,6 +20,7 @@ from src.io_loader import PDBLoader
 from src.surface import SurfaceGenerator
 from src.topology import TopologyManager
 from src.parameterization import Parameterizer
+from src.uv_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
 from src.visualizer import InterfaceVisualizer
 
 class ProtSurfApp:
@@ -109,6 +113,29 @@ class ProtSurfApp:
         self.entry_sigma = ttk.Entry(param_frame, width=10)
         self.entry_sigma.insert(0, "1.5")
         self.entry_sigma.grid(row=4, column=1, pady=2)
+
+        self.var_joint_opt = tk.BooleanVar(value=True)
+        self.chk_joint_opt = ttk.Checkbutton(param_frame, text="Enable Joint UV Opt", variable=self.var_joint_opt)
+        self.chk_joint_opt.grid(row=5, column=0, columnspan=2, sticky='w', pady=(4, 0))
+
+        ttk.Label(param_frame, text="Overlap Weight:").grid(row=6, column=0, sticky='w')
+        self.entry_overlap_weight = ttk.Entry(param_frame, width=10)
+        self.entry_overlap_weight.insert(0, "1.0")
+        self.entry_overlap_weight.grid(row=6, column=1, pady=2)
+
+        ttk.Label(param_frame, text="UV Max Iter:").grid(row=7, column=0, sticky='w')
+        self.entry_uv_iter = ttk.Entry(param_frame, width=10)
+        self.entry_uv_iter.insert(0, "60")
+        self.entry_uv_iter.grid(row=7, column=1, pady=2)
+
+        self.var_use_optcuts = tk.BooleanVar(value=False)
+        self.chk_use_optcuts = ttk.Checkbutton(param_frame, text="Use OptCuts Binary", variable=self.var_use_optcuts)
+        self.chk_use_optcuts.grid(row=8, column=0, columnspan=2, sticky='w', pady=(4, 0))
+
+        ttk.Label(param_frame, text="OptCuts Bin:").grid(row=9, column=0, sticky='w')
+        self.entry_optcuts_bin = ttk.Entry(param_frame, width=14)
+        self.entry_optcuts_bin.insert(0, "OptCuts_bin")
+        self.entry_optcuts_bin.grid(row=9, column=1, pady=2)
 
         # 3. Style Controls
         style_frame = ttk.LabelFrame(self.left_frame, text="3. Visualization Style", padding=10)
@@ -266,7 +293,12 @@ class ProtSurfApp:
             'arpeggio': self.entry_arpeggio.get().strip(),
             'cutoff': float(self.entry_cutoff.get()),
             'res': float(self.entry_res.get()),
-            'sigma': float(self.entry_sigma.get())
+            'sigma': float(self.entry_sigma.get()),
+            'enable_joint_opt': bool(self.var_joint_opt.get()),
+            'use_optcuts': bool(self.var_use_optcuts.get()),
+            'optcuts_bin': self.entry_optcuts_bin.get().strip() or "OptCuts_bin",
+            'overlap_weight': float(self.entry_overlap_weight.get()),
+            'uv_max_iter': int(self.entry_uv_iter.get())
         }
         self.btn_run.config(state=tk.DISABLED)
         self.btn_bench.config(state=tk.DISABLED)
@@ -438,6 +470,9 @@ class ProtSurfApp:
         We use Gemmi to convert and artificially populate this block.
         """
         self.log("Checking Arpeggio requirements...")
+        if gemmi is None:
+            self.log("Gemmi is not installed; skip Arpeggio auto-generation.")
+            return None
         
         pdb_dir = os.path.dirname(os.path.abspath(pdb_path))
         pdb_name = os.path.splitext(os.path.basename(pdb_path))[0]
@@ -593,7 +628,20 @@ class ProtSurfApp:
             
             if not valid_patches: raise ValueError("LSCM Parameterization failed for all patches.")
 
-            # --- Step 5: Visualization ---
+            # --- Step 5: Joint UV Optimization ---
+            self.log("Optimizing global UV layout...")
+            optimizer = OptCutsUVOptimizer(
+                UVOptimizerConfig(
+                    enabled=params.get('enable_joint_opt', True),
+                    use_optcuts=params.get('use_optcuts', False),
+                    optcuts_bin=params.get('optcuts_bin', "OptCuts_bin"),
+                    overlap_weight=params.get('overlap_weight', 1.0),
+                    max_iterations=params.get('uv_max_iter', 60)
+                )
+            )
+            valid_patches = optimizer.optimize_patches(valid_patches)
+
+            # --- Step 6: Visualization ---
             self.log("Rendering visualization...")
             
             viz = InterfaceVisualizer(

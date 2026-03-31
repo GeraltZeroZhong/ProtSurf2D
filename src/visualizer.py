@@ -240,14 +240,13 @@ class InterfaceVisualizer:
         if style_config: style.update(style_config)
 
         n_patches = len(patches)
-        fig, axes = plt.subplots(1, n_patches, figsize=(5 * n_patches, 6))
-        if n_patches == 1: axes = [axes]
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
         
         logger.info(f"Visualizing {n_patches} patches.")
 
         used_interactions = set()
         for i, patch in enumerate(patches):
-            found = self._draw_single_patch(axes[i], patch, i+1, style)
+            found = self._draw_single_patch(ax, patch, i + 1, style)
             used_interactions.update(found)
 
         if style['color_by_type'] and used_interactions:
@@ -257,6 +256,9 @@ class InterfaceVisualizer:
                     legend_handles.append(mpatches.Patch(color=self.interaction_colors.get(t, 'gray'), label=t))
             fig.legend(handles=legend_handles, loc='upper center', ncol=min(len(legend_handles), 5), frameon=False)
 
+        ax.set_title("Global UV Interaction Map")
+        ax.set_aspect('equal')
+        ax.axis('off')
         plt.tight_layout(rect=[0, 0, 1, 0.95])
         if output_file: plt.savefig(output_file, dpi=300)
         if show: plt.show()
@@ -264,7 +266,9 @@ class InterfaceVisualizer:
 
     def _draw_single_patch(self, ax, patch, patch_id, style):
         found_types = set()
-        uv = patch.metadata.get('uv')
+        uv = patch.metadata.get('uv_global')
+        if uv is None:
+            uv = patch.metadata.get('uv')
         if uv is None: return found_types
 
         ax.triplot(uv[:, 0], uv[:, 1], patch.faces, color='gray', alpha=0.15, lw=0.5, zorder=1)
@@ -345,7 +349,6 @@ class InterfaceVisualizer:
             txt.set_gid(uid)
             self.artist_map[uid] = {'scatter': sc, 'text': txt}
 
-        ax.set_title(f"Patch {patch_id}")
-        ax.set_aspect('equal')
-        ax.axis('off')
+        center = uv.mean(axis=0)
+        ax.text(center[0], center[1], f"P{patch_id}", fontsize=8, color='black', alpha=0.6)
         return found_types
