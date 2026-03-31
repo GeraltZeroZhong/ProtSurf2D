@@ -89,12 +89,31 @@ class Parameterizer:
             logger.error(f"Failed to detect boundary: {e}")
             return None
         
-        # Handle case where multiple boundaries might be returned (list of lists)
-        if len(bnd) > 0 and isinstance(bnd[0], (list, np.ndarray)):
-            # Heuristic: Pick the longest boundary loop (the "outer" one)
-            # Short loops are likely internal holes; LSCM can handle them as free boundaries.
-            bnd = sorted(bnd, key=lambda x: len(x), reverse=True)[0]
-        
+        # Handle libigl return variants robustly:
+        # - flat loop: [i0, i1, ...]
+        # - nested loops for multiple holes: [[...], (...), np.ndarray(...), ...]
+        # Some bindings can return tuples or mixed sequence wrappers.
+        if len(bnd) > 0:
+            first_item = bnd[0]
+            is_scalar_first = np.isscalar(first_item)
+            is_nested = (not is_scalar_first) and hasattr(first_item, "__iter__")
+
+            if is_nested:
+                loops = []
+                for loop in bnd:
+                    if np.isscalar(loop) or not hasattr(loop, "__iter__"):
+                        continue
+                    loop_arr = np.asarray(loop).reshape(-1)
+                    if loop_arr.size > 0:
+                        loops.append(loop_arr)
+
+                if loops:
+                    # Heuristic: Pick the longest boundary loop (the "outer" one).
+                    # Shorter loops are usually internal holes.
+                    bnd = max(loops, key=lambda x: x.size)
+
+        # Delay strict dtype conversion until we are sure `bnd` is a single flat loop.
+        bnd = np.asarray(bnd).reshape(-1)
         bnd = np.array(bnd, dtype=np.int32)
 
         if len(bnd) < 3:
