@@ -33,6 +33,8 @@ class ProtSurfApp:
         self.cached_patches = None
         self.current_fig = None  # To store the matplotlib figure for saving
         self._picking = False 
+        self._drag_state = None
+        self.label_offsets = {}
 
         # Interaction Types for Arpeggio
         # 'default' (Generic/VDW) is first in the list
@@ -170,6 +172,25 @@ class ProtSurfApp:
         self.btn_color = tk.Button(f_frame, text="Def. Color", bg=self.residue_color, command=self.choose_color, relief=tk.RAISED, state=tk.DISABLED, width=10)
         self.btn_color.pack(side=tk.RIGHT, padx=5)
 
+        self.var_show_labels = tk.BooleanVar(value=True)
+        ttk.Checkbutton(style_frame, text="Show Labels", variable=self.var_show_labels, command=self.redraw_plot).pack(anchor=tk.W, pady=2)
+
+        label_mode_frame = ttk.Frame(style_frame)
+        label_mode_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(label_mode_frame, text="Label Mode:").pack(side=tk.LEFT)
+        self.label_mode_options = {
+            "Chain A Residue": "chain_a",
+            "Chain B Residue": "chain_b",
+            "A-B Pair": "pair"
+        }
+        self.combo_label_mode = ttk.Combobox(label_mode_frame, values=list(self.label_mode_options.keys()), width=16, state="readonly")
+        self.combo_label_mode.set("Chain A Residue")
+        self.combo_label_mode.pack(side=tk.LEFT, padx=4)
+        self.combo_label_mode.bind("<<ComboboxSelected>>", lambda _e: self.redraw_plot())
+
+        self.var_avoid_overlap = tk.BooleanVar(value=True)
+        ttk.Checkbutton(style_frame, text="Reduce Label Overlap", variable=self.var_avoid_overlap, command=self.redraw_plot).pack(anchor=tk.W, pady=2)
+
         btn_frame = ttk.Frame(self.left_frame)
         btn_frame.pack(fill=tk.X, padx=10, pady=10)
         
@@ -253,7 +274,11 @@ class ProtSurfApp:
             'font_family': self.combo_font.get(),
             'font_size': int(self.spin_size.get()),
             'color_by_type': self.var_color_type.get(),
-            'active_types': active_types
+            'active_types': active_types,
+            'show_labels': bool(self.var_show_labels.get()),
+            'label_mode': self.label_mode_options.get(self.combo_label_mode.get(), "chain_a"),
+            'avoid_label_overlap': bool(self.var_avoid_overlap.get()),
+            'label_offsets': dict(self.label_offsets)
         }
         
     def save_figure(self):
@@ -300,6 +325,7 @@ class ProtSurfApp:
             'overlap_weight': float(self.entry_overlap_weight.get()),
             'uv_max_iter': int(self.entry_uv_iter.get())
         }
+        self.label_offsets = {}
         self.btn_run.config(state=tk.DISABLED)
         self.btn_bench.config(state=tk.DISABLED)
         self.btn_redraw.config(state=tk.DISABLED)
@@ -670,6 +696,8 @@ class ProtSurfApp:
     def on_pick(self, event):
         if self._picking: return
         artist = event.artist
+        if artist.__class__.__name__ != "PathCollection":
+            return
         gid = artist.get_gid()
         if gid and self.cached_viz and gid in self.cached_viz.artist_map:
             self._picking = True
@@ -682,6 +710,47 @@ class ProtSurfApp:
                     self.current_canvas.draw()
             finally:
                 self._picking = False
+
+    def on_mouse_press(self, event):
+        if not self.cached_viz or not event.inaxes:
+            return
+        for gid, objs in self.cached_viz.artist_map.items():
+            txt = objs.get('text')
+            if txt is None:
+                continue
+            contains, _ = txt.contains(event)
+            if contains:
+                self._drag_state = {'gid': gid}
+                break
+
+    def on_mouse_move(self, event):
+        if not self._drag_state or not event.inaxes or event.xdata is None or event.ydata is None:
+            return
+        gid = self._drag_state['gid']
+        objs = self.cached_viz.artist_map.get(gid, {})
+        txt = objs.get('text')
+        if txt is None:
+            return
+        txt.set_position((event.xdata, event.ydata))
+        connector = objs.get('connector')
+        scatter = objs.get('scatter')
+        if connector is not None and scatter is not None:
+            pt = scatter.get_offsets()[0]
+            connector.set_data([pt[0], event.xdata], [pt[1], event.ydata])
+        self.current_canvas.draw_idle()
+
+    def on_mouse_release(self, event):
+        if not self._drag_state:
+            return
+        gid = self._drag_state['gid']
+        objs = self.cached_viz.artist_map.get(gid, {})
+        txt = objs.get('text')
+        scatter = objs.get('scatter')
+        if txt is not None and scatter is not None:
+            pt = scatter.get_offsets()[0]
+            tx, ty = txt.get_position()
+            self.label_offsets[gid] = (float(tx - pt[0]), float(ty - pt[1]))
+        self._drag_state = None
 
     def update_plot(self, viz, patches, style):
         for widget in self.canvas_frame.winfo_children(): widget.destroy()
@@ -696,6 +765,9 @@ class ProtSurfApp:
         self.current_canvas.draw()
         self.current_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         self.current_canvas.mpl_connect('pick_event', self.on_pick)
+        self.current_canvas.mpl_connect('button_press_event', self.on_mouse_press)
+        self.current_canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
+        self.current_canvas.mpl_connect('button_release_event', self.on_mouse_release)
         self.progress.stop()
         self.btn_run.config(state=tk.NORMAL)
         self.btn_bench.config(state=tk.NORMAL)
