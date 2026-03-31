@@ -2,7 +2,7 @@ import numpy as np
 import trimesh
 import trimesh.smoothing
 from skimage import measure
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, binary_closing
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +56,29 @@ class SurfaceGenerator:
         if max_density == 0:
             logger.error("Density field is empty (all zeros). Check coordinates.")
             return None
+
+        # 4. Voxel-space morphological closing before Marching Cubes.
+        # This fills tiny interior gaps/tunnels and reduces downstream topology noise.
+        closing_level = min(level, max_density * 0.9)
+        occupancy = density_field >= closing_level
+        closed_occupancy = binary_closing(
+            occupancy,
+            structure=np.ones((3, 3, 3), dtype=bool),
+            iterations=1
+        )
+        occupied_before = int(np.count_nonzero(occupancy))
+        occupied_after = int(np.count_nonzero(closed_occupancy))
+        if np.any(closed_occupancy):
+            density_field = np.where(
+                closed_occupancy,
+                np.maximum(density_field, closing_level),
+                0.0
+            )
+        logger.info(
+            "Applied voxel-space binary closing "
+            f"(level={closing_level:.6f}, occupied_voxels: {occupied_before} -> {occupied_after}, "
+            f"delta={occupied_after - occupied_before})."
+        )
 
         # --- Iterative Level Adjustment (Smart Retry) ---
         # Fix for 1AHW issue: If max_density is driven by outliers (e.g. clashing atoms),

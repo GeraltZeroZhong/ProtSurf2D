@@ -95,6 +95,20 @@ class Parameterizer:
         # int64 indices can cause binding-level dtype mismatch and unstable behavior.
         f = np.ascontiguousarray(mesh.faces, dtype=np.int32)
 
+        # Topology gate before LSCM: a valid open disk patch should satisfy
+        # Euler characteristic chi = V - E + F = 1.
+        chi, n_edges = Parameterizer._euler_characteristic(f, len(v))
+        logger.info(
+            "Euler topology stats before LSCM: "
+            f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi} (expected chi=1 for disk-like patch)."
+        )
+        if chi != 1:
+            logger.warning(
+                "Euler characteristic gate failed; "
+                f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi}. Skipping LSCM."
+            )
+            return None
+
         # 2. Find Boundary Loop (LSCM needs a boundary)
         # igl.boundary_loop returns the ordered vertex indices of the boundary
         try:
@@ -266,6 +280,25 @@ class Parameterizer:
         aspect_ok = aspect_ratio < max_aspect_ratio
         angle_ok = min_angle >= min_angle_deg
         return area_ok & aspect_ok & angle_ok
+
+    @staticmethod
+    def _euler_characteristic(faces, n_vertices):
+        """
+        Compute Euler characteristic chi = V - E + F for a triangular mesh patch.
+        """
+        if len(faces) == 0:
+            return 0, 0
+        edges = np.vstack(
+            [
+                faces[:, [0, 1]],
+                faces[:, [1, 2]],
+                faces[:, [2, 0]],
+            ]
+        )
+        edges = np.sort(edges, axis=1)
+        n_edges = int(len(np.unique(edges, axis=0)))
+        chi = int(n_vertices - n_edges + len(faces))
+        return chi, n_edges
 
 # --- Self-Contained Unit Test ---
 if __name__ == "__main__":
