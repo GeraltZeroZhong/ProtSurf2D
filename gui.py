@@ -121,36 +121,44 @@ class ProtSurfApp:
         self.entry_min_points.insert(0, "10")
         self.entry_min_points.grid(row=5, column=1, pady=2)
 
+        self.var_filter_valid_only = tk.BooleanVar(value=True)
+        self.chk_filter_valid_only = ttk.Checkbutton(
+            param_frame,
+            text="Show Valid Interfaces Only",
+            variable=self.var_filter_valid_only
+        )
+        self.chk_filter_valid_only.grid(row=6, column=0, columnspan=2, sticky='w', pady=(4, 0))
+
         self.var_joint_opt = tk.BooleanVar(value=True)
         self.chk_joint_opt = ttk.Checkbutton(param_frame, text="Enable Joint UV Opt", variable=self.var_joint_opt)
-        self.chk_joint_opt.grid(row=6, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        self.chk_joint_opt.grid(row=7, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        ttk.Label(param_frame, text="Overlap Weight:").grid(row=7, column=0, sticky='w')
+        ttk.Label(param_frame, text="Overlap Weight:").grid(row=8, column=0, sticky='w')
         self.entry_overlap_weight = ttk.Entry(param_frame, width=10)
         self.entry_overlap_weight.insert(0, "1.0")
-        self.entry_overlap_weight.grid(row=7, column=1, pady=2)
+        self.entry_overlap_weight.grid(row=8, column=1, pady=2)
 
-        ttk.Label(param_frame, text="UV Max Iter:").grid(row=8, column=0, sticky='w')
+        ttk.Label(param_frame, text="UV Max Iter:").grid(row=9, column=0, sticky='w')
         self.entry_uv_iter = ttk.Entry(param_frame, width=10)
         self.entry_uv_iter.insert(0, "60")
-        self.entry_uv_iter.grid(row=8, column=1, pady=2)
+        self.entry_uv_iter.grid(row=9, column=1, pady=2)
 
         self.var_use_optcuts = tk.BooleanVar(value=False)
         self.chk_use_optcuts = ttk.Checkbutton(param_frame, text="Use OptCuts Binary", variable=self.var_use_optcuts)
-        self.chk_use_optcuts.grid(row=9, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        self.chk_use_optcuts.grid(row=10, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        ttk.Label(param_frame, text="OptCuts Bin:").grid(row=10, column=0, sticky='w')
+        ttk.Label(param_frame, text="OptCuts Bin:").grid(row=11, column=0, sticky='w')
         self.entry_optcuts_bin = ttk.Entry(param_frame, width=14)
         self.entry_optcuts_bin.insert(0, "OptCuts_bin")
-        self.entry_optcuts_bin.grid(row=10, column=1, pady=2)
+        self.entry_optcuts_bin.grid(row=11, column=1, pady=2)
 
         self.var_auto_cutoff = tk.BooleanVar(value=False)
         self.chk_auto_cutoff = ttk.Checkbutton(param_frame, text="Auto Search Best Cutoff", variable=self.var_auto_cutoff)
-        self.chk_auto_cutoff.grid(row=11, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        self.chk_auto_cutoff.grid(row=12, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        ttk.Label(param_frame, text="Cutoff Start/End:").grid(row=12, column=0, sticky='w')
+        ttk.Label(param_frame, text="Cutoff Start/End:").grid(row=13, column=0, sticky='w')
         cutoff_range_frame = ttk.Frame(param_frame)
-        cutoff_range_frame.grid(row=12, column=1, pady=2, sticky='w')
+        cutoff_range_frame.grid(row=13, column=1, pady=2, sticky='w')
         self.entry_cutoff_start = ttk.Entry(cutoff_range_frame, width=4)
         self.entry_cutoff_start.insert(0, "3.0")
         self.entry_cutoff_start.pack(side=tk.LEFT)
@@ -159,10 +167,10 @@ class ProtSurfApp:
         self.entry_cutoff_end.insert(0, "10.0")
         self.entry_cutoff_end.pack(side=tk.LEFT)
 
-        ttk.Label(param_frame, text="Cutoff Step:").grid(row=13, column=0, sticky='w')
+        ttk.Label(param_frame, text="Cutoff Step:").grid(row=14, column=0, sticky='w')
         self.entry_cutoff_step = ttk.Entry(param_frame, width=10)
         self.entry_cutoff_step.insert(0, "0.5")
-        self.entry_cutoff_step.grid(row=13, column=1, pady=2)
+        self.entry_cutoff_step.grid(row=14, column=1, pady=2)
 
         # 3. Style Controls
         style_frame = ttk.LabelFrame(self.left_frame, text="3. Visualization Style", padding=10)
@@ -345,6 +353,7 @@ class ProtSurfApp:
             'res': float(self.entry_res.get()),
             'sigma': float(self.entry_sigma.get()),
             'min_points': int(self.entry_min_points.get()),
+            'filter_valid_only': bool(self.var_filter_valid_only.get()),
             'enable_joint_opt': bool(self.var_joint_opt.get()),
             'use_optcuts': bool(self.var_use_optcuts.get()),
             'optcuts_bin': self.entry_optcuts_bin.get().strip() or "OptCuts_bin",
@@ -722,16 +731,22 @@ class ProtSurfApp:
                 f"Interface count summary (min points = {params['min_points']}): "
                 f"valid={valid_count}, invalid={invalid_count}"
             )
-            if not display_patches:
-                raise ValueError(
-                    f"All interfaces are invalid (point count < {params['min_points']})."
-                )
+            if params.get('filter_valid_only', True):
+                selected_patches = display_patches
+                if not selected_patches:
+                    raise ValueError(
+                        f"All interfaces are invalid (point count < {params['min_points']})."
+                    )
+                self.log("Display mode: valid interfaces only.")
+            else:
+                selected_patches = valid_patches
+                self.log("Display mode: all interfaces (including invalid).")
 
             # --- Step 6: Visualization ---
             self.log("Rendering visualization...")
             
             self.cached_viz = viz
-            self.cached_patches = display_patches
+            self.cached_patches = selected_patches
             self.root.after(0, lambda: self.finish_success())
         except Exception as e:
             err_msg = str(e)
@@ -786,21 +801,35 @@ class ProtSurfApp:
             if not processed:
                 self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: parameterization failed")
                 continue
-            _, valid_count, invalid_count = self._split_interfaces_by_point_count(processed, viz, min_points)
+            valid_patches, valid_count, invalid_count = self._split_interfaces_by_point_count(processed, viz, min_points)
+            valid_points = sum(p.metadata.get('point_count', 0) for p in valid_patches)
             self.log(
-                f"[Cutoff Search] cutoff={cutoff:.2f}: valid={valid_count}, invalid={invalid_count}"
+                f"[Cutoff Search] cutoff={cutoff:.2f}: valid={valid_count}, invalid={invalid_count}, "
+                f"valid_points={valid_points}"
             )
             if valid_count == 0:
                 continue
-            if best is None or valid_count < best[1]:
-                best = (cutoff, valid_count)
+            if (
+                best is None
+                or valid_count < best['valid_count']
+                or (valid_count == best['valid_count'] and valid_points > best['valid_points'])
+            ):
+                best = {
+                    'cutoff': cutoff,
+                    'valid_count': valid_count,
+                    'valid_points': valid_points
+                }
 
         if best is None:
             raise ValueError(
                 "Cutoff search failed: no candidate produced valid interfaces. "
                 "Please adjust range/step/min-points."
             )
-        return best[0]
+        self.log(
+            f"[Cutoff Search] selected cutoff={best['cutoff']:.2f} "
+            f"(valid={best['valid_count']}, valid_points={best['valid_points']})"
+        )
+        return best['cutoff']
 
     def finish_success(self):
         style = self.get_style_config()
