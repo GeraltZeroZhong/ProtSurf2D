@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.collections import PolyCollection
 from scipy.spatial import KDTree
 import logging
 import os
@@ -233,14 +234,15 @@ class InterfaceVisualizer:
         if uv is None: return found_types
 
         patch_color = self.patch_fill_palette[(patch_id - 1) % len(self.patch_fill_palette)]
-        ax.tripcolor(
-            uv[:, 0], uv[:, 1], patch.faces,
-            color=patch_color,
-            shading='flat',
-            alpha=float(style.get('mesh_fill_alpha', 0.22)),
+        triangles_2d = uv[np.asarray(patch.faces, dtype=np.int64)]
+        fill = PolyCollection(
+            triangles_2d,
+            facecolors=patch_color,
             edgecolors='none',
+            alpha=float(style.get('mesh_fill_alpha', 0.22)),
             zorder=0
         )
+        ax.add_collection(fill)
         ax.triplot(
             uv[:, 0], uv[:, 1], patch.faces,
             color='#2f3b52',
