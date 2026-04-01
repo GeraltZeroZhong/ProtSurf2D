@@ -29,6 +29,9 @@ class UVOptimizerConfig:
     optcuts_bin: str = "OptCuts_bin"
     patch_gap: float = 0.08
     optcuts_prog_mode: int = 1
+    # OptCuts CLI positional argument (README: initialCutOption).
+    # NOTE: this is not a frame-export switch.
+    optcuts_initial_cut_option: int = 0
     save_optcuts_frames: bool = False
     # Export every frame by default. Larger values can be used to downsample.
     optcuts_frame_stride: int = 1
@@ -38,6 +41,8 @@ class UVOptimizerConfig:
     # 0 disables upscaling.
     optcuts_min_frame_long_edge: int = 3200
     optcuts_frames_dir: str = ""
+    # Keep original GIF artifacts (if any) for direct playback/debugging.
+    optcuts_copy_raw_gif: bool = True
 
 
 class OptCutsUVOptimizer:
@@ -139,17 +144,16 @@ class OptCutsUVOptimizer:
                 # The bundled binary is invoked via positional parameters (see tools/OptCuts/install_optcuts.sh).
                 # Keep the output inside the temporary directory by setting cwd.
                 run_tag = "patch"
-                output_option = "1" if self.config.save_optcuts_frames else "0"
                 cmd = [
                     resolved_bin,
-                    "10",       # target face count / simplification setting
-                    in_obj,      # input obj
-                    "0.999",    # distortion bound
-                    str(int(self.config.optcuts_prog_mode)),  # mode (1=default, 2=headless)
-                    "0",        # initial cut option
-                    "4.1",      # b_d (>=4.1 according to binary warnings)
-                    "1",        # normalize UV
-                    output_option,  # output option (enable frame dumps when requested)
+                    "10",       # mode: offline optimization with visualization outputs
+                    in_obj,      # input mesh path
+                    "0.999",    # lambda_init
+                    str(int(self.config.optcuts_prog_mode)),  # testID
+                    "0",        # methodType
+                    "4.1",      # distortionBound
+                    "1",        # useBijectivity
+                    str(int(self.config.optcuts_initial_cut_option)),
                     run_tag,     # output tag
                 ]
                 proc = subprocess.run(cmd, capture_output=True, text=True, cwd=tmpdir)
@@ -184,12 +188,18 @@ class OptCutsUVOptimizer:
         os.makedirs(output_dir, exist_ok=True)
 
         png_paths = []
+        raster_paths = []
         gif_paths = []
         for root, _, files in os.walk(tmpdir):
             for name in files:
-                if name.lower().endswith(".png"):
-                    png_paths.append(os.path.join(root, name))
-                elif name.lower().endswith(".gif"):
+                lower = name.lower()
+                full_path = os.path.join(root, name)
+                if lower.endswith(".png"):
+                    png_paths.append(full_path)
+                    raster_paths.append(full_path)
+                elif lower.endswith((".bmp", ".jpg", ".jpeg", ".tif", ".tiff")):
+                    raster_paths.append(full_path)
+                elif lower.endswith(".gif"):
                     gif_paths.append(os.path.join(root, name))
 
         patch_dir = os.path.join(output_dir, f"patch_{patch_index:03d}")
@@ -206,7 +216,8 @@ class OptCutsUVOptimizer:
             nums = tuple(int(c) for c in chunks) if chunks else ()
             return (0 if chunks else 1, nums, base, path)
 
-        ordered_paths = sorted(png_paths, key=_frame_sort_key)
+        ordered_png_paths = sorted(png_paths, key=_frame_sort_key)
+        ordered_raster_paths = sorted(raster_paths, key=_frame_sort_key)
 
         def _is_diagnostic_png(path: str) -> bool:
             base = os.path.basename(path).lower()
@@ -229,14 +240,21 @@ class OptCutsUVOptimizer:
 
         # Prefer likely viewer timeline PNGs; if unavailable, still prefer any non-diagnostic
         # PNG before falling back to GIF extraction (to avoid irreversible GIF quantization).
-        viewer_like = [path for path in ordered_paths if _is_viewer_like_png(path)]
-        non_diagnostic_pngs = [path for path in ordered_paths if not _is_diagnostic_png(path)]
+        viewer_like = [path for path in ordered_png_paths if _is_viewer_like_png(path)]
+        non_diagnostic_pngs = [path for path in ordered_png_paths if not _is_diagnostic_png(path)]
+        non_diagnostic_rasters = [path for path in ordered_raster_paths if not _is_diagnostic_png(path)]
 
-        # Prefer PNG viewer snapshots over GIF extraction whenever they exist.
-        # GIF output is palette-quantized and often generated at a smaller fixed
-        # capture size, which can look blurry even after upscaling.
-        if viewer_like or non_diagnostic_pngs:
-            frame_candidates = viewer_like if viewer_like else non_diagnostic_pngs
+        # Prefer PNG/raster viewer snapshots whenever they provide an actual frame sequence.
+        # Only if sequence rasters are unavailable do we fallback to GIF extraction.
+        frame_candidates = viewer_like if viewer_like else non_diagnostic_pngs
+        prefer_png_sequence = bool(frame_candidates) and len(frame_candidates) > 1
+        if not prefer_png_sequence and len(non_diagnostic_rasters) > 1:
+            # Some OptCuts builds dump snapshots as JPG/BMP/TIFF instead of PNG.
+            # Use those rasters directly (converted to PNG on save) to keep sharpness.
+            frame_candidates = non_diagnostic_rasters
+            prefer_png_sequence = True
+
+        if prefer_png_sequence:
             # Sample by rank (every Nth frame after sorting), not by raw numeric ID.
             # This avoids dropping almost all frames when only a subset of files have
             # digit-only basenames.
@@ -261,22 +279,29 @@ class OptCutsUVOptimizer:
             if not viewer_like:
                 logger.warning(
                     "No explicit viewer-like PNG naming pattern found for patch %d. "
-                    "Exported non-diagnostic PNG sequence to preserve quality.",
+                    "Exported non-diagnostic raster sequence to preserve quality.",
                     patch_index,
                 )
             return
 
-        # No viewer-like PNG sequence found. Try GIF extraction as fallback.
+        # No sharp raster sequence found; fallback to GIF to preserve temporal process.
+        # GIF is palette-quantized by OptCuts itself, so extraction keeps native resolution
+        # (no upscaling) to avoid magnifying blocky artifacts.
         extracted_gif_frames = self._export_frames_from_gifs(
             gif_paths=gif_paths,
             patch_dir=patch_dir,
             stride=stride,
-            min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
+            min_long_edge=0,
         )
+        if gif_paths and self.config.optcuts_copy_raw_gif:
+            for gif_idx, gif_path in enumerate(sorted(gif_paths)):
+                gif_name = f"source_{gif_idx:02d}_{os.path.basename(gif_path)}"
+                shutil.copy2(gif_path, os.path.join(patch_dir, gif_name))
         if extracted_gif_frames > 0:
             logger.warning(
-                "No PNG viewer snapshots found for patch %d. Falling back to GIF extraction "
-                "(palette-quantized frames may appear blurrier than the live libigl viewer).",
+                "No raster frame sequence found for patch %d. Exported frames from GIF at native "
+                "resolution (palette quantization is produced by OptCuts). For viewer-level sharp "
+                "process frames, OptCuts itself must output per-iteration PNG screenshots.",
                 patch_index,
             )
             logger.info(
@@ -291,7 +316,7 @@ class OptCutsUVOptimizer:
             logger.info("OptCuts frame export enabled, but no PNG/GIF frames were found for patch %d.", patch_index)
             return
 
-        frame_candidates = ordered_paths
+        frame_candidates = ordered_png_paths
         selected = frame_candidates[::stride]
         if not selected:
             selected = [frame_candidates[0]]
