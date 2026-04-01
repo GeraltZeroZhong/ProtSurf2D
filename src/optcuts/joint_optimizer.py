@@ -195,28 +195,6 @@ class OptCutsUVOptimizer:
         patch_dir = os.path.join(output_dir, f"patch_{patch_index:03d}")
         os.makedirs(patch_dir, exist_ok=True)
 
-        # OptCuts' libigl viewer timeline is usually saved as anim.gif.
-        # Prefer extracting those frames (true viewer snapshots) over static
-        # diagnostics such as *_seam.png / *_distortion.png / finalResult.png.
-        extracted_gif_frames = self._export_frames_from_gifs(
-            gif_paths=gif_paths,
-            patch_dir=patch_dir,
-            stride=max(1, int(self.config.optcuts_frame_stride)),
-            min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
-        )
-        if extracted_gif_frames > 0:
-            logger.info(
-                "OptCuts viewer frames exported for patch %d: %d image(s) -> %s",
-                patch_index,
-                extracted_gif_frames,
-                patch_dir,
-            )
-            return
-
-        if not png_paths:
-            logger.info("OptCuts frame export enabled, but no PNG frames were found for patch %d.", patch_index)
-            return
-
         stride = max(1, int(self.config.optcuts_frame_stride))
 
         def _frame_sort_key(path: str):
@@ -229,28 +207,94 @@ class OptCutsUVOptimizer:
             return (0 if chunks else 1, nums, base, path)
 
         ordered_paths = sorted(png_paths, key=_frame_sort_key)
-        # Fallback path: keep likely viewer snapshots and drop known static diagnostics.
-        # Typical diagnostics from OptCuts are:
-        # - *_distortion.png
-        # - *_seam.png
-        # - finalResult.png
-        # while viewer snapshots are commonly numeric basenames such as 0.png, 1.png, ...
-        viewer_like = []
-        for path in ordered_paths:
+
+        def _is_diagnostic_png(path: str) -> bool:
             base = os.path.basename(path).lower()
             stem = os.path.splitext(base)[0]
-            if base == "finalresult.png" or stem.endswith("_distortion") or stem.endswith("_seam"):
-                continue
-            if stem.isdigit():
-                viewer_like.append(path)
+            return base == "finalresult.png" or stem.endswith("_distortion") or stem.endswith("_seam")
 
-        frame_candidates = viewer_like if viewer_like else ordered_paths
-        # Sample by rank (every Nth frame after sorting), not by raw numeric ID.
-        # This avoids dropping almost all frames when only a subset of files have
-        # digit-only basenames.
+        def _is_viewer_like_png(path: str) -> bool:
+            # Viewer snapshot names vary across OptCuts builds; keep this permissive.
+            # Examples seen in practice:
+            # - 0.png / 1.png / 2.png
+            # - frame_0001.png / viewer_001.png / iter_10.png
+            # We only exclude known static diagnostic outputs.
+            base = os.path.basename(path).lower()
+            stem = os.path.splitext(base)[0]
+            if _is_diagnostic_png(path):
+                return False
+            if stem.isdigit():
+                return True
+            return any(tag in stem for tag in ("frame", "viewer", "iter", "step", "anim"))
+
+        # Prefer likely viewer timeline PNGs; if unavailable, still prefer any non-diagnostic
+        # PNG before falling back to GIF extraction (to avoid irreversible GIF quantization).
+        viewer_like = [path for path in ordered_paths if _is_viewer_like_png(path)]
+        non_diagnostic_pngs = [path for path in ordered_paths if not _is_diagnostic_png(path)]
+
+        # Prefer PNG viewer snapshots over GIF extraction whenever they exist.
+        # GIF output is palette-quantized and often generated at a smaller fixed
+        # capture size, which can look blurry even after upscaling.
+        if viewer_like or non_diagnostic_pngs:
+            frame_candidates = viewer_like if viewer_like else non_diagnostic_pngs
+            # Sample by rank (every Nth frame after sorting), not by raw numeric ID.
+            # This avoids dropping almost all frames when only a subset of files have
+            # digit-only basenames.
+            selected = frame_candidates[::stride]
+            if not selected:
+                selected = [frame_candidates[0]]
+            for idx, src_path in enumerate(selected):
+                base_name = os.path.basename(src_path)
+                dst_name = f"{idx:04d}_{base_name}"
+                dst_path = os.path.join(patch_dir, dst_name)
+                self._copy_png_with_min_resolution(
+                    src_path=src_path,
+                    dst_path=dst_path,
+                    min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
+                )
+            logger.info(
+                "OptCuts PNG frames exported for patch %d: %d image(s) -> %s",
+                patch_index,
+                len(selected),
+                patch_dir,
+            )
+            if not viewer_like:
+                logger.warning(
+                    "No explicit viewer-like PNG naming pattern found for patch %d. "
+                    "Exported non-diagnostic PNG sequence to preserve quality.",
+                    patch_index,
+                )
+            return
+
+        # No viewer-like PNG sequence found. Try GIF extraction as fallback.
+        extracted_gif_frames = self._export_frames_from_gifs(
+            gif_paths=gif_paths,
+            patch_dir=patch_dir,
+            stride=stride,
+            min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
+        )
+        if extracted_gif_frames > 0:
+            logger.warning(
+                "No PNG viewer snapshots found for patch %d. Falling back to GIF extraction "
+                "(palette-quantized frames may appear blurrier than the live libigl viewer).",
+                patch_index,
+            )
+            logger.info(
+                "OptCuts GIF viewer frames exported for patch %d: %d image(s) -> %s",
+                patch_index,
+                extracted_gif_frames,
+                patch_dir,
+            )
+            return
+
+        if not png_paths:
+            logger.info("OptCuts frame export enabled, but no PNG/GIF frames were found for patch %d.", patch_index)
+            return
+
+        frame_candidates = ordered_paths
         selected = frame_candidates[::stride]
-        if not selected and png_paths:
-            selected = [png_paths[0]]
+        if not selected:
+            selected = [frame_candidates[0]]
 
         # Different OptCuts subfolders can contain frames with the same basename
         # (e.g. multiple "0.png"). Copying by basename would overwrite files and
@@ -284,12 +328,11 @@ class OptCutsUVOptimizer:
             len(selected),
             patch_dir,
         )
-        if not viewer_like:
-            logger.warning(
-                "No viewer-like PNG sequence found for patch %d. Exported fallback PNGs; "
-                "the current OptCuts build may only emit diagnostic images.",
-                patch_index,
-            )
+        logger.warning(
+            "No viewer-like frame sequence found for patch %d. Exported fallback diagnostic PNGs; "
+            "the current OptCuts build may only emit static analysis images.",
+            patch_index,
+        )
 
     @staticmethod
     def _export_frames_from_gifs(gif_paths: List[str], patch_dir: str, stride: int, min_long_edge: int) -> int:
