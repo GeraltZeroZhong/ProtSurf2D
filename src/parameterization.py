@@ -194,6 +194,49 @@ class Parameterizer:
         return uv_normalized
 
     @staticmethod
+    def refine_patch_uv(mesh: trimesh.Trimesh, uv_init: np.ndarray = None, blend_strength: float = 0.8):
+        """
+        Joint-optimization friendly UV refinement entry.
+
+        Strategy:
+          1) Try a fresh robust flattening (LSCM/harmonic fallback).
+          2) If uv_init exists, blend the new solution with uv_init to reduce jitter.
+          3) Normalize to [0, 1] range.
+        """
+        uv_new = Parameterizer.flatten_patch(mesh)
+        if uv_new is None:
+            return None
+        if uv_init is None or len(uv_init) != len(uv_new):
+            return uv_new
+        alpha = float(np.clip(blend_strength, 0.0, 1.0))
+        blended = alpha * np.asarray(uv_new, dtype=np.float64) + (1.0 - alpha) * np.asarray(uv_init, dtype=np.float64)
+        return Parameterizer._normalize_uv(blended)
+
+    @staticmethod
+    def uv_distortion_stats(mesh: trimesh.Trimesh, uv: np.ndarray):
+        """
+        Lightweight distortion proxy used by outer alternating optimizer.
+        """
+        if uv is None or len(uv) == 0 or len(mesh.faces) == 0:
+            return {"mean": float("inf"), "max": float("inf")}
+        f = np.asarray(mesh.faces, dtype=np.int64)
+        v3 = np.asarray(mesh.vertices, dtype=np.float64)
+        v2 = np.asarray(uv, dtype=np.float64)
+        e3 = np.stack([
+            np.linalg.norm(v3[f[:, 1]] - v3[f[:, 0]], axis=1),
+            np.linalg.norm(v3[f[:, 2]] - v3[f[:, 1]], axis=1),
+            np.linalg.norm(v3[f[:, 0]] - v3[f[:, 2]], axis=1),
+        ], axis=1)
+        e2 = np.stack([
+            np.linalg.norm(v2[f[:, 1]] - v2[f[:, 0]], axis=1),
+            np.linalg.norm(v2[f[:, 2]] - v2[f[:, 1]], axis=1),
+            np.linalg.norm(v2[f[:, 0]] - v2[f[:, 2]], axis=1),
+        ], axis=1)
+        ratio = e2 / np.maximum(e3, 1e-8)
+        val = np.abs(np.log(np.maximum(ratio, 1e-8))).mean(axis=1)
+        return {"mean": float(np.mean(val)), "max": float(np.max(val))}
+
+    @staticmethod
     def _flatten_harmonic(v, f, bnd):
         """
         Fallback method: Map boundary to circle and minimize Dirichlet energy.
