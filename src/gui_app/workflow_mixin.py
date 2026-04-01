@@ -84,7 +84,7 @@ class WorkflowMixin:
             param = Parameterizer()
             optimizer = OptCutsUVOptimizer(
                 UVOptimizerConfig(
-                    enabled=params.get('enable_joint_opt', True),
+                    enabled=False,
                     use_optcuts=params.get('use_optcuts', False),
                     optcuts_bin=params.get('optcuts_bin', "OptCuts_bin"),
                     overlap_weight=params.get('overlap_weight', 1.0),
