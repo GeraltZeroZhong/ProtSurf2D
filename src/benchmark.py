@@ -34,6 +34,7 @@ class BenchmarkConfig:
     sigma: float
     patch_gap: float = 0.08
     optcuts_bin: str = "OptCuts_bin"
+    optcuts_headless: bool = True
     raster_size: int = 256
     cutoff_sweep: Optional[List[float]] = None
     sigma_sweep: Optional[List[float]] = None
@@ -234,7 +235,13 @@ class BenchmarkRunner:
     def _run_optcuts(self, patches):
         if not patches:
             return []
-        optimizer = OptCutsUVOptimizer(UVOptimizerConfig(optcuts_bin=self.config.optcuts_bin, patch_gap=self.config.patch_gap))
+        optimizer = OptCutsUVOptimizer(
+            UVOptimizerConfig(
+                optcuts_bin=self.config.optcuts_bin,
+                patch_gap=self.config.patch_gap,
+                optcuts_prog_mode=2 if self.config.optcuts_headless else 1,
+            )
+        )
         return optimizer.optimize_patches([p.copy() for p in patches])
 
     def _quality_block(self, patches, patch_gap: float) -> Dict[str, object]:

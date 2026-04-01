@@ -66,13 +66,30 @@ class UIMixin:
         self.entry_optcuts_bin.insert(0, "OptCuts_bin")
         self.entry_optcuts_bin.grid(row=8, column=1, pady=2)
 
+        self.var_save_optcuts_frames = tk.BooleanVar(value=False)
+        self.chk_save_optcuts_frames = ttk.Checkbutton(
+            param_frame,
+            text="Export OptCuts Frames",
+            variable=self.var_save_optcuts_frames,
+        )
+        self.chk_save_optcuts_frames.grid(row=9, column=0, columnspan=2, sticky='w', pady=(4, 0))
+
+        ttk.Label(param_frame, text="Frame Stride:").grid(row=10, column=0, sticky='w')
+        self.entry_optcuts_frame_stride = ttk.Entry(param_frame, width=10)
+        self.entry_optcuts_frame_stride.insert(0, "5")
+        self.entry_optcuts_frame_stride.grid(row=10, column=1, pady=2)
+
+        ttk.Label(param_frame, text="Frame Dir (optional):").grid(row=11, column=0, sticky='w')
+        self.entry_optcuts_frames_dir = ttk.Entry(param_frame, width=14)
+        self.entry_optcuts_frames_dir.grid(row=11, column=1, pady=2)
+
         self.var_auto_cutoff = tk.BooleanVar(value=False)
         self.chk_auto_cutoff = ttk.Checkbutton(param_frame, text="Auto Search Best Cutoff", variable=self.var_auto_cutoff)
-        self.chk_auto_cutoff.grid(row=9, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        self.chk_auto_cutoff.grid(row=12, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        ttk.Label(param_frame, text="Cutoff Start/End:").grid(row=10, column=0, sticky='w')
+        ttk.Label(param_frame, text="Cutoff Start/End:").grid(row=13, column=0, sticky='w')
         cutoff_range_frame = ttk.Frame(param_frame)
-        cutoff_range_frame.grid(row=10, column=1, pady=2, sticky='w')
+        cutoff_range_frame.grid(row=13, column=1, pady=2, sticky='w')
         self.entry_cutoff_start = ttk.Entry(cutoff_range_frame, width=4)
         self.entry_cutoff_start.insert(0, "3.0")
         self.entry_cutoff_start.pack(side=tk.LEFT)
@@ -81,10 +98,10 @@ class UIMixin:
         self.entry_cutoff_end.insert(0, "10.0")
         self.entry_cutoff_end.pack(side=tk.LEFT)
 
-        ttk.Label(param_frame, text="Cutoff Step:").grid(row=11, column=0, sticky='w')
+        ttk.Label(param_frame, text="Cutoff Step:").grid(row=14, column=0, sticky='w')
         self.entry_cutoff_step = ttk.Entry(param_frame, width=10)
         self.entry_cutoff_step.insert(0, "0.5")
-        self.entry_cutoff_step.grid(row=11, column=1, pady=2)
+        self.entry_cutoff_step.grid(row=14, column=1, pady=2)
 
         style_frame = ttk.LabelFrame(self.left_frame, text="3. Visualization Style", padding=10)
         style_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -271,6 +288,9 @@ class UIMixin:
             'min_points': int(self.entry_min_points.get()),
             'filter_valid_only': bool(self.var_filter_valid_only.get()),
             'optcuts_bin': self.entry_optcuts_bin.get().strip() or "OptCuts_bin",
+            'save_optcuts_frames': bool(self.var_save_optcuts_frames.get()),
+            'optcuts_frame_stride': int(self.entry_optcuts_frame_stride.get() or "5"),
+            'optcuts_frames_dir': self.entry_optcuts_frames_dir.get().strip(),
             'auto_cutoff': bool(self.var_auto_cutoff.get()),
             'cutoff_start': float(self.entry_cutoff_start.get()),
             'cutoff_end': float(self.entry_cutoff_end.get()),

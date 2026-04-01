@@ -15,6 +15,13 @@ from src.benchmark import BenchmarkConfig, BenchmarkRunner
 
 
 class WorkflowMixin:
+    @staticmethod
+    def _default_optcuts_frame_dir(input_path: str) -> str:
+        base_dir = os.path.dirname(input_path) or os.getcwd()
+        stem = os.path.splitext(os.path.basename(input_path))[0]
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        return os.path.join(base_dir, f"{stem}_optcuts_frames_{ts}")
+
     def _generate_auto_csv(self, folder):
         self.log("Scanning folder for PDB files to generate CSV...")
         pdbs = [f for f in os.listdir(folder) if f.lower().endswith('.pdb')]
@@ -83,8 +90,10 @@ class WorkflowMixin:
                 sigma=params["sigma"],
                 patch_gap=params["patch_gap"],
                 optcuts_bin=params["optcuts_bin"],
+                optcuts_headless=True,
             )
             runner = BenchmarkRunner(config=config, log_fn=self.log)
+            self.log("Benchmark OptCuts runs in headless mode (viewer disabled).")
             output = runner.run()
             summary = output.get("summary", {})
             self.log(
@@ -137,12 +146,23 @@ class WorkflowMixin:
 
             self.log("Extracting interface patches...")
             param = Parameterizer()
+            frame_export_dir = params.get('optcuts_frames_dir') or self._default_optcuts_frame_dir(params['path'])
             optimizer = OptCutsUVOptimizer(
                 UVOptimizerConfig(
                     optcuts_bin=params.get('optcuts_bin', "OptCuts_bin"),
                     patch_gap=params.get('patch_gap', 0.08),
+                    save_optcuts_frames=params.get('save_optcuts_frames', False),
+                    optcuts_frame_stride=max(1, int(params.get('optcuts_frame_stride', 5))),
+                    optcuts_frames_dir=frame_export_dir,
                 )
             )
+            if params.get('save_optcuts_frames', False):
+                self.log(
+                    "OptCuts frame export enabled: stride={}, output={}".format(
+                        max(1, int(params.get('optcuts_frame_stride', 5))),
+                        frame_export_dir,
+                    )
+                )
             viz = InterfaceVisualizer(
                 chain_A_atoms=atoms_A,
                 chain_A_coords=coords_A,
