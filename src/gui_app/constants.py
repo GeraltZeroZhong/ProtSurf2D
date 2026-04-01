@@ -1,8 +1,6 @@
 INTERACTION_TYPES = [
     'VdWContact',
     'HydrogenBond',
-    'HBAcceptor',
-    'HBDonor',
     'Hydrophobic',
     'PiStacking',
     'PiCation',
@@ -10,8 +8,7 @@ INTERACTION_TYPES = [
     'Cationic',
     'Anionic',
     'HalogenBond',
-    'MetalAcceptor',
-    'MetalDonor'
+    'MetalCoordination'
 ]
 
-DEFAULT_ACTIVE_TYPES = {'VdWContact'}
+DEFAULT_ACTIVE_TYPES = set(INTERACTION_TYPES)

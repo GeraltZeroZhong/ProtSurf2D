@@ -24,6 +24,8 @@ class UIMixin:
 
         param_frame = ttk.LabelFrame(self.left_frame, text="2. Analysis Parameters", padding=10)
         param_frame.pack(fill=tk.X, padx=5, pady=5)
+        param_frame.columnconfigure(0, weight=1)
+        param_frame.columnconfigure(1, weight=1)
 
         ttk.Label(param_frame, text="Chain A (Surf):").grid(row=0, column=0, sticky='w')
         self.entry_chain_a = ttk.Entry(param_frame, width=10)
@@ -115,7 +117,12 @@ class UIMixin:
         for i, itype in enumerate(self.interaction_types_list):
             var = tk.BooleanVar(value=(itype in self.default_active))
             self.interaction_vars[itype] = var
-            ttk.Checkbutton(self.filter_frame, text=itype, variable=var, command=self.redraw_plot).grid(row=i // 2, column=i % 2, sticky='w', padx=2)
+            ttk.Checkbutton(
+                self.filter_frame,
+                text=itype,
+                variable=var,
+                command=self.redraw_plot
+            ).grid(row=i // 3, column=i % 3, sticky='w', padx=4, pady=1)
 
         f_frame = ttk.Frame(style_frame)
         f_frame.pack(fill=tk.X, pady=5)
@@ -152,18 +159,20 @@ class UIMixin:
 
         btn_frame = ttk.Frame(self.left_frame)
         btn_frame.pack(fill=tk.X, padx=10, pady=10)
+        btn_frame.columnconfigure(0, weight=1)
+        btn_frame.columnconfigure(1, weight=1)
 
         self.btn_run = ttk.Button(btn_frame, text="Run Single Analysis", command=self.start_analysis)
-        self.btn_run.pack(fill=tk.X, pady=5)
+        self.btn_run.grid(row=0, column=0, columnspan=2, sticky='ew', pady=4)
 
         self.btn_bench = ttk.Button(btn_frame, text="Run Benchmark Comparison", command=self.start_benchmark)
-        self.btn_bench.pack(fill=tk.X, pady=5)
+        self.btn_bench.grid(row=1, column=0, columnspan=2, sticky='ew', pady=4)
 
         self.btn_redraw = ttk.Button(btn_frame, text="Update Style Only", command=self.redraw_plot, state=tk.DISABLED)
-        self.btn_redraw.pack(fill=tk.X, pady=5)
+        self.btn_redraw.grid(row=2, column=0, sticky='ew', pady=4, padx=(0, 4))
 
         self.btn_save = ttk.Button(btn_frame, text="Save Figure...", command=self.save_figure, state=tk.DISABLED)
-        self.btn_save.pack(fill=tk.X, pady=5)
+        self.btn_save.grid(row=2, column=1, sticky='ew', pady=4, padx=(4, 0))
 
         self.progress = ttk.Progressbar(self.left_frame, mode='indeterminate')
         self.progress.pack(fill=tk.X, padx=10, pady=5)

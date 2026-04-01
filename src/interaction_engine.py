@@ -7,8 +7,8 @@ logger = logging.getLogger("InteractionEngine")
 
 PROLIF_TO_STANDARD = {
     "HydrogenBond": "HydrogenBond",
-    "HBAcceptor": "HBAcceptor",
-    "HBDonor": "HBDonor",
+    "HBAcceptor": "HydrogenBond",
+    "HBDonor": "HydrogenBond",
     "Hydrophobic": "Hydrophobic",
     "PiStacking": "PiStacking",
     "PiCation": "PiCation",
@@ -17,8 +17,9 @@ PROLIF_TO_STANDARD = {
     "Anionic": "Anionic",
     "Ionic": "Cationic",
     "HalogenBond": "HalogenBond",
-    "MetalAcceptor": "MetalAcceptor",
-    "MetalDonor": "MetalDonor",
+    "MetalAcceptor": "MetalCoordination",
+    "MetalDonor": "MetalCoordination",
+    "MetalCoordination": "MetalCoordination",
     "VdWContact": "VdWContact",
 }
 
