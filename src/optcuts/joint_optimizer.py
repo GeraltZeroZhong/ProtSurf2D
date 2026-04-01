@@ -26,6 +26,10 @@ logger = logging.getLogger("UVOOptimizer")
 class UVOptimizerConfig:
     optcuts_bin: str = "OptCuts_bin"
     patch_gap: float = 0.08
+    optcuts_prog_mode: int = 1
+    save_optcuts_frames: bool = False
+    optcuts_frame_stride: int = 5
+    optcuts_frames_dir: str = ""
 
 
 class OptCutsUVOptimizer:
@@ -45,7 +49,7 @@ class OptCutsUVOptimizer:
             uv = patch.metadata.get("uv")
             if uv is None:
                 raise RuntimeError(f"Patch {idx} is missing initial UV before OptCuts.")
-            opt_uv = self._run_optcuts_for_patch(patch, uv)
+            opt_uv = self._run_optcuts_for_patch(patch, uv, patch_index=idx)
             patch.metadata["uv_optcuts"] = opt_uv
             patch.metadata["uv"] = opt_uv
             patch.metadata["uv_global"] = opt_uv.copy()
@@ -113,7 +117,7 @@ class OptCutsUVOptimizer:
     def get_last_report(self) -> Dict[str, object]:
         return dict(self.last_report)
 
-    def _run_optcuts_for_patch(self, patch: trimesh.Trimesh, reference_uv: np.ndarray) -> np.ndarray:
+    def _run_optcuts_for_patch(self, patch: trimesh.Trimesh, reference_uv: np.ndarray, patch_index: int) -> np.ndarray:
         bin_path = self.config.optcuts_bin
         resolved_bin = shutil.which(bin_path) if not os.path.isabs(bin_path) else bin_path
         if not resolved_bin or not os.path.exists(resolved_bin):
@@ -132,7 +136,7 @@ class OptCutsUVOptimizer:
                     "10",       # target face count / simplification setting
                     in_obj,      # input obj
                     "0.999",    # distortion bound
-                    "1",        # mode
+                    str(int(self.config.optcuts_prog_mode)),  # mode (1=default, 2=headless)
                     "0",        # initial cut option
                     "4.1",      # b_d (>=4.1 according to binary warnings)
                     "1",        # normalize UV
@@ -154,11 +158,77 @@ class OptCutsUVOptimizer:
                 if len(uv) != len(reference_uv):
                     raise RuntimeError(f"OptCuts UV vertex count mismatch ({len(uv)} vs {len(reference_uv)})")
 
+                self._maybe_export_optcuts_frames(tmpdir=tmpdir, patch_index=patch_index)
                 return uv
         except Exception as exc:
             if isinstance(exc, RuntimeError):
                 raise
             raise RuntimeError(f"OptCuts execution error: {exc}") from exc
+
+    def _maybe_export_optcuts_frames(self, tmpdir: str, patch_index: int) -> None:
+        if not self.config.save_optcuts_frames:
+            return
+
+        output_dir = self.config.optcuts_frames_dir.strip()
+        if not output_dir:
+            output_dir = os.path.join(os.getcwd(), "optcuts_frames")
+        os.makedirs(output_dir, exist_ok=True)
+
+        png_paths = []
+        for root, _, files in os.walk(tmpdir):
+            for name in files:
+                if name.lower().endswith(".png"):
+                    png_paths.append(os.path.join(root, name))
+        if not png_paths:
+            logger.info("OptCuts frame export enabled, but no PNG frames were found for patch %d.", patch_index)
+            return
+
+        png_paths.sort()
+        stride = max(1, int(self.config.optcuts_frame_stride))
+        frame_candidates = []
+        for p in png_paths:
+            base = os.path.splitext(os.path.basename(p))[0]
+            if base.isdigit():
+                frame_candidates.append((int(base), p))
+
+        selected = []
+        if frame_candidates:
+            frame_candidates.sort(key=lambda item: item[0])
+            selected = [path for frame_id, path in frame_candidates if frame_id % stride == 0]
+            if not selected and frame_candidates:
+                selected = [frame_candidates[0][1]]
+        else:
+            selected = png_paths[::stride]
+            if not selected and png_paths:
+                selected = [png_paths[0]]
+
+        patch_dir = os.path.join(output_dir, f"patch_{patch_index:03d}")
+        os.makedirs(patch_dir, exist_ok=True)
+        for src_path in selected:
+            shutil.copy2(src_path, os.path.join(patch_dir, os.path.basename(src_path)))
+
+        final_png = self._find_first_existing_file(
+            [
+                os.path.join(tmpdir, "output", "finalResult.png"),
+                os.path.join(tmpdir, "finalResult.png"),
+            ]
+        )
+        if final_png:
+            shutil.copy2(final_png, os.path.join(patch_dir, "finalResult.png"))
+
+        logger.info(
+            "OptCuts frames exported for patch %d: %d image(s) -> %s",
+            patch_index,
+            len(selected),
+            patch_dir,
+        )
+
+    @staticmethod
+    def _find_first_existing_file(paths: List[str]) -> Optional[str]:
+        for p in paths:
+            if os.path.exists(p):
+                return p
+        return None
 
     @staticmethod
     def _locate_optcuts_output_obj(tmpdir: str) -> str:
