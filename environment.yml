@@ -17,7 +17,7 @@ dependencies:
   - rtree      
   - shapely
   - openbabel 
-  - gemmi    
+  - mdanalysis
   - pip
   - pip:
-    - pdbe-arpeggio
+    - prolif
