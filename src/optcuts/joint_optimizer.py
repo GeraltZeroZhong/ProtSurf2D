@@ -131,6 +131,7 @@ class OptCutsUVOptimizer:
                 # The bundled binary is invoked via positional parameters (see tools/OptCuts/install_optcuts.sh).
                 # Keep the output inside the temporary directory by setting cwd.
                 run_tag = "patch"
+                output_option = "1" if self.config.save_optcuts_frames else "0"
                 cmd = [
                     resolved_bin,
                     "10",       # target face count / simplification setting
@@ -140,7 +141,7 @@ class OptCutsUVOptimizer:
                     "0",        # initial cut option
                     "4.1",      # b_d (>=4.1 according to binary warnings)
                     "1",        # normalize UV
-                    "0",        # output option
+                    output_option,  # output option (enable frame dumps when requested)
                     run_tag,     # output tag
                 ]
                 proc = subprocess.run(cmd, capture_output=True, text=True, cwd=tmpdir)
@@ -194,18 +195,25 @@ class OptCutsUVOptimizer:
         selected = []
         if frame_candidates:
             frame_candidates.sort(key=lambda item: item[0])
-            selected = [path for frame_id, path in frame_candidates if frame_id % stride == 0]
-            if not selected and frame_candidates:
-                selected = [frame_candidates[0][1]]
+            ordered_paths = [path for _, path in frame_candidates]
+            # Sample by rank (every Nth frame after sorting), not by raw numeric ID.
+            # Some OptCuts runs start from 1 or use sparse numbering, and ID-based
+            # modulo can accidentally keep only one frame.
+            selected = ordered_paths[::stride]
         else:
             selected = png_paths[::stride]
-            if not selected and png_paths:
-                selected = [png_paths[0]]
+        if not selected and png_paths:
+            selected = [png_paths[0]]
 
         patch_dir = os.path.join(output_dir, f"patch_{patch_index:03d}")
         os.makedirs(patch_dir, exist_ok=True)
-        for src_path in selected:
-            shutil.copy2(src_path, os.path.join(patch_dir, os.path.basename(src_path)))
+        # Different OptCuts subfolders can contain frames with the same basename
+        # (e.g. multiple "0.png"). Copying by basename would overwrite files and
+        # make it look like only one image was exported. Use deterministic unique names.
+        for idx, src_path in enumerate(selected):
+            base_name = os.path.basename(src_path)
+            dst_name = f"{idx:04d}_{base_name}"
+            shutil.copy2(src_path, os.path.join(patch_dir, dst_name))
 
         final_png = self._find_first_existing_file(
             [
