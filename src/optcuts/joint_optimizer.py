@@ -278,15 +278,29 @@ class OptCutsUVOptimizer:
         try:
             with tempfile.TemporaryDirectory(prefix="optcuts_") as tmpdir:
                 in_obj = os.path.join(tmpdir, "patch_in.obj")
-                out_obj = os.path.join(tmpdir, "patch_out.obj")
                 patch.export(in_obj)
 
-                cmd = [resolved_bin, "--input", in_obj, "--output", out_obj]
-                proc = subprocess.run(cmd, capture_output=True, text=True)
+                # The bundled binary is invoked via positional parameters (see tools/OptCuts/install_optcuts.sh).
+                # Keep the output inside the temporary directory by setting cwd.
+                run_tag = "patch"
+                cmd = [
+                    resolved_bin,
+                    "10",       # target face count / simplification setting
+                    in_obj,      # input obj
+                    "0.999",    # distortion bound
+                    "1",        # mode
+                    "0",        # initial cut option
+                    "4.1",      # b_d (>=4.1 according to binary warnings)
+                    "1",        # normalize UV
+                    "0",        # output option
+                    run_tag,     # output tag
+                ]
+                proc = subprocess.run(cmd, capture_output=True, text=True, cwd=tmpdir)
                 if proc.returncode != 0:
                     logger.warning("OptCuts failed (code=%s): %s", proc.returncode, proc.stderr.strip())
                     return None
 
+                out_obj = self._locate_optcuts_output_obj(tmpdir)
                 if not os.path.exists(out_obj):
                     logger.warning("OptCuts output OBJ not found: %s", out_obj)
                     return None
@@ -303,6 +317,21 @@ class OptCutsUVOptimizer:
         except Exception as exc:
             logger.warning("OptCuts execution error: %s", exc)
             return None
+
+    @staticmethod
+    def _locate_optcuts_output_obj(tmpdir: str) -> str:
+        candidate_paths = [
+            os.path.join(tmpdir, "output", "finalResult_mesh.obj"),
+            os.path.join(tmpdir, "finalResult_mesh.obj"),
+        ]
+        for path in candidate_paths:
+            if os.path.exists(path):
+                return path
+
+        for root, _, files in os.walk(tmpdir):
+            if "finalResult_mesh.obj" in files:
+                return os.path.join(root, "finalResult_mesh.obj")
+        return os.path.join(tmpdir, "output", "finalResult_mesh.obj")
 
     @staticmethod
     def _read_uv_from_obj(obj_path: str) -> Optional[np.ndarray]:

@@ -61,10 +61,6 @@ class UIMixin:
         self.chk_filter_valid_only = ttk.Checkbutton(param_frame, text="Show Valid Interfaces Only", variable=self.var_filter_valid_only)
         self.chk_filter_valid_only.grid(row=6, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        self.var_joint_opt = tk.BooleanVar(value=True)
-        self.chk_joint_opt = ttk.Checkbutton(param_frame, text="Enable Joint UV Opt", variable=self.var_joint_opt)
-        self.chk_joint_opt.grid(row=7, column=0, columnspan=2, sticky='w', pady=(4, 0))
-
         ttk.Label(param_frame, text="Overlap Weight:").grid(row=8, column=0, sticky='w')
         self.entry_overlap_weight = ttk.Entry(param_frame, width=10)
         self.entry_overlap_weight.insert(0, "1.0")
@@ -181,7 +177,7 @@ class UIMixin:
         self.canvas_frame = ttk.Frame(self.right_frame)
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
         self.current_canvas = None
-        lbl = ttk.Label(self.canvas_frame, text="Load a PDB then click Run.\nJoint optimization metrics will be logged in the status area.", font=("Arial", 12))
+        lbl = ttk.Label(self.canvas_frame, text="Load a PDB then click Run.", font=("Arial", 12))
         lbl.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
     def _init_status_bar(self):
@@ -283,7 +279,6 @@ class UIMixin:
             'sigma': float(self.entry_sigma.get()),
             'min_points': int(self.entry_min_points.get()),
             'filter_valid_only': bool(self.var_filter_valid_only.get()),
-            'enable_joint_opt': bool(self.var_joint_opt.get()),
             'use_optcuts': bool(self.var_use_optcuts.get()),
             'optcuts_bin': self.entry_optcuts_bin.get().strip() or "OptCuts_bin",
             'overlap_weight': float(self.entry_overlap_weight.get()),
