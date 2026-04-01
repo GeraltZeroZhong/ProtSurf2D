@@ -210,7 +210,8 @@ class WorkflowMixin:
             self.cached_patches = selected_patches
             self.root.after(0, lambda: self.finish_success())
         except Exception as e:
-            self.root.after(0, lambda: self.show_error(str(e)))
+            error_message = str(e)
+            self.root.after(0, lambda msg=error_message: self.show_error(msg))
 
     def _parameterize_and_optimize_patches(self, patches, parameterizer, optimizer):
         valid_patches = []
