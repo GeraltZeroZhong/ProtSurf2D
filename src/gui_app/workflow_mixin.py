@@ -1,5 +1,7 @@
 import csv
 import os
+import threading
+from datetime import datetime
 from tkinter import messagebox
 
 from src.io_loader import PDBLoader
@@ -9,6 +11,7 @@ from src.parameterization import Parameterizer
 from src.uv_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
 from src.visualizer import InterfaceVisualizer
 from src.interaction_engine import generate_prolif_interactions
+from src.benchmark import BenchmarkConfig, BenchmarkRunner
 
 
 class WorkflowMixin:
@@ -45,12 +48,64 @@ class WorkflowMixin:
             return False, f"Failed to write CSV: {e}"
 
     def start_benchmark(self):
-        messagebox.showinfo(
-            "Benchmark Removed",
-            "Benchmark workflow has been removed. "
-            "Please use the joint optimization pipeline directly from Run.",
-        )
-        self.log("Benchmark module removed; skipping benchmark workflow.")
+        folder = self.entry_file.get().strip()
+        if not folder or not os.path.isdir(folder):
+            messagebox.showerror("Error", "Please select a valid folder containing .pdb files.")
+            return
+
+        params = {
+            'folder': folder,
+            'chain_a': self.entry_chain_a.get().strip(),
+            'chain_b': self.entry_chain_b.get().strip(),
+            'cutoff': float(self.entry_cutoff.get()),
+            'res': float(self.entry_res.get()),
+            'sigma': float(self.entry_sigma.get()),
+            'patch_gap': 0.08,
+            'optcuts_bin': self.entry_optcuts_bin.get().strip() or "OptCuts_bin",
+        }
+        self.btn_run.config(state="disabled")
+        self.btn_bench.config(state="disabled")
+        self.progress.start(10)
+        self.log("Starting benchmark pipeline...")
+        threading.Thread(target=self.run_benchmark_pipeline, args=(params,), daemon=True).start()
+
+    def run_benchmark_pipeline(self, params):
+        try:
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            output_root = os.path.join(params["folder"], f"benchmark_results_{ts}")
+            config = BenchmarkConfig(
+                input_folder=params["folder"],
+                output_root=output_root,
+                chain_a=params["chain_a"],
+                chain_b=params["chain_b"],
+                cutoff=params["cutoff"],
+                res=params["res"],
+                sigma=params["sigma"],
+                patch_gap=params["patch_gap"],
+                optcuts_bin=params["optcuts_bin"],
+            )
+            runner = BenchmarkRunner(config=config, log_fn=self.log)
+            output = runner.run()
+            summary = output.get("summary", {})
+            self.log(
+                "Benchmark done. valid_structures={}, lscm_mean={:.4f}, lscm_optcuts_mean={:.4f}, harmonic_mean={:.4f}".format(
+                    int(summary.get("valid_structure_count", 0)),
+                    float(summary.get("distortion_lscm_mean", float("inf"))),
+                    float(summary.get("distortion_lscm_optcuts_mean", float("inf"))),
+                    float(summary.get("distortion_harmonic_mean", float("inf"))),
+                )
+            )
+            self.root.after(
+                0,
+                lambda: messagebox.showinfo(
+                    "Benchmark Completed",
+                    f"Results saved to:\n{output_root}\n\n"
+                    "Generated files:\n- benchmark_report.json\n- benchmark_summary.csv",
+                ),
+            )
+            self.root.after(0, lambda: self.finish_success())
+        except Exception as e:
+            self.root.after(0, lambda msg=str(e): self.show_error(f"Benchmark failed: {msg}"))
 
     def generate_prolif_interactions(self, pdb_path, chain_a, chain_b):
         self.log("Checking ProLIF requirements...")

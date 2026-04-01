@@ -147,7 +147,7 @@ class UIMixin:
         self.btn_run = ttk.Button(btn_frame, text="Run Single Analysis", command=self.start_analysis)
         self.btn_run.grid(row=0, column=0, columnspan=2, sticky='ew', pady=4)
 
-        self.btn_bench = ttk.Button(btn_frame, text="Benchmark (Removed)", command=self.start_benchmark)
+        self.btn_bench = ttk.Button(btn_frame, text="Run Benchmark", command=self.start_benchmark)
         self.btn_bench.grid(row=1, column=0, columnspan=2, sticky='ew', pady=4)
 
         self.btn_redraw = ttk.Button(btn_frame, text="Update Style Only", command=self.redraw_plot, state=tk.DISABLED)

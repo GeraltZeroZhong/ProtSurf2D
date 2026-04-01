@@ -15,7 +15,7 @@ class Parameterizer:
     _lscm_runtime_logged = False
     
     @staticmethod
-    def flatten_patch(mesh: trimesh.Trimesh) -> np.ndarray:
+    def flatten_patch(mesh: trimesh.Trimesh, method: str = "auto", return_info: bool = False):
         """
         Flatten a 3D mesh patch to 2D.
         
@@ -25,6 +25,25 @@ class Parameterizer:
         Returns:
             np.ndarray: UV coordinates of shape (N, 2), or None if failed.
         """
+        diag = {
+            "method": method,
+            "diskification_triggered": False,
+            "diskification_success": False,
+            "topology_before": {},
+            "topology_after": {},
+            "face_count_before_topology_gate": 0,
+            "face_count_after_topology_gate": 0,
+            "vertex_count_before_topology_gate": 0,
+            "vertex_count_after_topology_gate": 0,
+            "area_before_topology_gate": 0.0,
+            "area_after_topology_gate": 0.0,
+            "failure_reason": None,
+        }
+        mode = (method or "auto").strip().lower()
+        if mode not in {"auto", "lscm", "harmonic"}:
+            logger.warning(f"Unknown parameterization method '{method}', fallback to auto.")
+            mode = "auto"
+
         # --- Step 0: Robust Mesh Sanitation ---
         # Critical Fix: Smoothing in TopologyManager can introduce degenerate (zero-area) faces.
         # These cause the LSCM linear solver to fail (singular matrix). 
@@ -83,11 +102,13 @@ class Parameterizer:
             # Check if mesh is still valid
             if len(mesh.vertices) < 3 or len(mesh.faces) == 0:
                 logger.warning("Mesh became empty or degenerate after cleanup.")
-                return None
+                diag["failure_reason"] = "mesh_degenerate_after_cleanup"
+                return (None, diag) if return_info else None
                 
         except Exception as e:
             logger.warning(f"Mesh sanitation in Parameterizer failed: {e}")
-            return None
+            diag["failure_reason"] = "mesh_sanitation_failed"
+            return (None, diag) if return_info else None
 
         # --- Step 1: Prepare IGL Data ---
         # IGL is strict about types. Ensure correct C++ compatible types.
@@ -100,12 +121,17 @@ class Parameterizer:
         # Topology gate before LSCM: a valid open disk patch should satisfy
         # Euler characteristic chi = V - E + F = 1, and have exactly one boundary loop.
         chi, n_edges, n_boundary_loops = Parameterizer._topology_stats(f, len(v))
+        diag["face_count_before_topology_gate"] = int(len(f))
+        diag["vertex_count_before_topology_gate"] = int(len(v))
+        diag["area_before_topology_gate"] = float(mesh.area) if hasattr(mesh, "area") else 0.0
+        diag["topology_before"] = {"chi": int(chi), "edges": int(n_edges), "boundary_loops": int(n_boundary_loops)}
         logger.info(
             "Euler topology stats before LSCM: "
             f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi}, boundary_loops={n_boundary_loops} "
             "(expected chi=1 and boundary_loops=1 for disk-like patch)."
         )
         if chi != 1 or n_boundary_loops != 1:
+            diag["diskification_triggered"] = True
             logger.warning(
                 "Patch not disk-like; attempting diskification before LSCM."
             )
@@ -117,18 +143,24 @@ class Parameterizer:
                 v = np.ascontiguousarray(mesh.vertices, dtype=np.float64)
                 f = np.ascontiguousarray(mesh.faces, dtype=np.int32)
                 chi, n_edges, n_boundary_loops = Parameterizer._topology_stats(f, len(v))
+                diag["diskification_success"] = bool(chi == 1 and n_boundary_loops == 1)
                 logger.info(
                     "Euler topology stats after diskification: "
                     f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi}, boundary_loops={n_boundary_loops}."
                 )
 
+        diag["topology_after"] = {"chi": int(chi), "edges": int(n_edges), "boundary_loops": int(n_boundary_loops)}
+        diag["face_count_after_topology_gate"] = int(len(f))
+        diag["vertex_count_after_topology_gate"] = int(len(v))
+        diag["area_after_topology_gate"] = float(mesh.area) if hasattr(mesh, "area") else 0.0
         if chi != 1 or n_boundary_loops != 1:
             logger.warning(
                 "Euler characteristic gate failed; "
                 f"V={len(v)}, E={n_edges}, F={len(f)}, chi={chi}, boundary_loops={n_boundary_loops}. "
                 "Skipping LSCM."
             )
-            return None
+            diag["failure_reason"] = "topology_gate_failed"
+            return (None, diag) if return_info else None
 
         # 2. Find Boundary Loop (LSCM needs a boundary)
         # igl.boundary_loop returns the ordered vertex indices of the boundary
@@ -136,7 +168,8 @@ class Parameterizer:
             bnd = igl.boundary_loop(f)
         except Exception as e:
             logger.error(f"Failed to detect boundary: {e}")
-            return None
+            diag["failure_reason"] = "boundary_detection_failed"
+            return (None, diag) if return_info else None
         
         # libigl 2.6.x returns one longest ordered boundary loop.
         bnd = np.asarray(bnd).reshape(-1)
@@ -144,7 +177,8 @@ class Parameterizer:
 
         if len(bnd) < 3:
             logger.error("Mesh has no valid boundary (closed or degenerate).")
-            return None
+            diag["failure_reason"] = "invalid_boundary"
+            return (None, diag) if return_info else None
 
         # 3. Fix Boundary Conditions for LSCM
         # Strategy: Pin two topologically opposite points on the boundary ring.
@@ -159,39 +193,42 @@ class Parameterizer:
 
         # 4. Run LSCM
         uv_normalized = None
-        try:
-            if not Parameterizer._lscm_runtime_logged:
-                try:
-                    igl_version = importlib.metadata.version("libigl")
-                except Exception:
-                    igl_version = "unknown"
-                logger.info(f"LSCM runtime: libigl={igl_version}")
-                Parameterizer._lscm_runtime_logged = True
+        if mode in {"auto", "lscm"}:
+            try:
+                if not Parameterizer._lscm_runtime_logged:
+                    try:
+                        igl_version = importlib.metadata.version("libigl")
+                    except Exception:
+                        igl_version = "unknown"
+                    logger.info(f"LSCM runtime: libigl={igl_version}")
+                    Parameterizer._lscm_runtime_logged = True
 
-            # libigl 2.6.x python bindings return (V_uv, Q) and raise RuntimeError on failure.
-            uv, _q = igl.lscm(v, f, b, bc)
-            has_valid_uv = isinstance(uv, np.ndarray) and uv.ndim == 2 and uv.shape == (v.shape[0], 2)
-            if has_valid_uv:
-                uv_normalized = Parameterizer._normalize_uv(uv)
-            else:
-                logger.warning(
-                    "IGL LSCM returned unexpected UV shape: "
-                    f"{None if uv is None else getattr(uv, 'shape', type(uv))}"
-                )
+                # libigl 2.6.x python bindings return (V_uv, Q) and raise RuntimeError on failure.
+                uv, _q = igl.lscm(v, f, b, bc)
+                has_valid_uv = isinstance(uv, np.ndarray) and uv.ndim == 2 and uv.shape == (v.shape[0], 2)
+                if has_valid_uv:
+                    uv_normalized = Parameterizer._normalize_uv(uv)
+                else:
+                    logger.warning(
+                        "IGL LSCM returned unexpected UV shape: "
+                        f"{None if uv is None else getattr(uv, 'shape', type(uv))}"
+                    )
 
-        except RuntimeError as e:
-            logger.warning(f"LSCM solver failed: {e}")
-            uv_normalized = None
-        except Exception as e:
-            logger.warning(f"LSCM Exception: {e}")
+            except RuntimeError as e:
+                logger.warning(f"LSCM solver failed: {e}")
+                uv_normalized = None
+            except Exception as e:
+                logger.warning(f"LSCM Exception: {e}")
 
         # 5. Fallback: Harmonic Parameterization
         # Only triggered if LSCM absolutely fails
-        if uv_normalized is None:
+        if uv_normalized is None and mode in {"auto", "harmonic"}:
             logger.info("Attempting Harmonic Parameterization fallback...")
             uv_normalized = Parameterizer._flatten_harmonic(v, f, bnd)
 
-        return uv_normalized
+        if uv_normalized is None and diag["failure_reason"] is None:
+            diag["failure_reason"] = "parameterization_failed"
+        return (uv_normalized, diag) if return_info else uv_normalized
 
     @staticmethod
     def refine_patch_uv(mesh: trimesh.Trimesh, uv_init: np.ndarray = None, blend_strength: float = 0.8):
