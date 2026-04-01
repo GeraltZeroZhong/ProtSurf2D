@@ -152,14 +152,14 @@ class WorkflowMixin:
                     optcuts_bin=params.get('optcuts_bin', "OptCuts_bin"),
                     patch_gap=params.get('patch_gap', 0.08),
                     save_optcuts_frames=params.get('save_optcuts_frames', False),
-                    optcuts_frame_stride=max(1, int(params.get('optcuts_frame_stride', 5))),
+                    optcuts_frame_stride=max(1, int(params.get('optcuts_frame_stride', 1))),
                     optcuts_frames_dir=frame_export_dir,
                 )
             )
             if params.get('save_optcuts_frames', False):
                 self.log(
                     "OptCuts frame export enabled: stride={}, output={}".format(
-                        max(1, int(params.get('optcuts_frame_stride', 5))),
+                        max(1, int(params.get('optcuts_frame_stride', 1))),
                         frame_export_dir,
                     )
                 )
