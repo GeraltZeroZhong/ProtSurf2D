@@ -33,8 +33,10 @@ class UVOptimizerConfig:
     # Export every frame by default. Larger values can be used to downsample.
     optcuts_frame_stride: int = 1
     # Upscale exported frames when the source image is too small.
+    # The value is treated as the minimum target for BOTH width and height,
+    # so exported frames are guaranteed to not stay at tiny dimensions (e.g. 320px wide).
     # 0 disables upscaling.
-    optcuts_min_frame_long_edge: int = 1600
+    optcuts_min_frame_long_edge: int = 3200
     optcuts_frames_dir: str = ""
 
 
@@ -306,9 +308,12 @@ class OptCutsUVOptimizer:
                 for frame_idx in range(0, total_frames, stride):
                     gif.seek(frame_idx)
                     frame = gif.convert("RGBA")
-                    frame = OptCutsUVOptimizer._resize_image_if_needed(frame, min_long_edge=min_long_edge)
                     out_name = f"{frame_count:04d}_viewer_g{gif_idx:02d}_f{frame_idx:05d}.png"
-                    frame.save(os.path.join(patch_dir, out_name))
+                    OptCutsUVOptimizer._save_png_with_min_resolution(
+                        image=frame,
+                        dst_path=os.path.join(patch_dir, out_name),
+                        min_long_edge=min_long_edge,
+                    )
                     frame_count += 1
         return frame_count
 
@@ -317,18 +322,43 @@ class OptCutsUVOptimizer:
         if min_long_edge <= 0:
             return image
         w, h = image.size
-        long_edge = max(w, h)
-        if long_edge >= min_long_edge or long_edge <= 0:
+        if w <= 0 or h <= 0:
             return image
-        scale = float(min_long_edge) / float(long_edge)
+        # Historical behavior only constrained the long edge, which allowed very narrow
+        # frames such as 320x1600 to pass without resizing. Here we enforce that both
+        # dimensions reach at least min_long_edge so width does not remain tiny.
+        scale_w = float(min_long_edge) / float(w)
+        scale_h = float(min_long_edge) / float(h)
+        scale = max(1.0, scale_w, scale_h)
+        if scale <= 1.0:
+            return image
         new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
         return image.resize(new_size, Image.Resampling.LANCZOS)
 
     @staticmethod
     def _copy_png_with_min_resolution(src_path: str, dst_path: str, min_long_edge: int) -> None:
         with Image.open(src_path) as img:
-            out = OptCutsUVOptimizer._resize_image_if_needed(img.convert("RGBA"), min_long_edge=min_long_edge)
-            out.save(dst_path)
+            OptCutsUVOptimizer._save_png_with_min_resolution(
+                image=img.convert("RGBA"),
+                dst_path=dst_path,
+                min_long_edge=min_long_edge,
+            )
+
+    @staticmethod
+    def _save_png_with_min_resolution(image: Image.Image, dst_path: str, min_long_edge: int) -> None:
+        out = OptCutsUVOptimizer._resize_image_if_needed(image, min_long_edge=min_long_edge)
+        out.save(dst_path)
+        if min_long_edge <= 0:
+            return
+        # Defensive check: make sure saved output really meets the configured minimum.
+        with Image.open(dst_path) as saved:
+            sw, sh = saved.size
+        if sw >= min_long_edge and sh >= min_long_edge:
+            return
+        # Second pass should be rare, but guarantees final dimensions if first pass
+        # was bypassed by any unexpected image backend behavior.
+        corrected = OptCutsUVOptimizer._resize_image_if_needed(out, min_long_edge=min_long_edge)
+        corrected.save(dst_path)
 
     @staticmethod
     def _find_first_existing_file(paths: List[str]) -> Optional[str]:
