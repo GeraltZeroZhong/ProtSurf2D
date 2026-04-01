@@ -147,7 +147,7 @@ class OptCutsUVOptimizer:
                 if not os.path.exists(out_obj):
                     raise RuntimeError(f"OptCuts output OBJ not found: {out_obj}")
 
-                uv = self._read_uv_from_obj(out_obj)
+                uv = self._read_uv_from_obj(out_obj, expected_vertex_count=len(reference_uv))
                 if uv is None:
                     raise RuntimeError(f"Failed to parse UV from OptCuts output: {out_obj}")
 
@@ -176,14 +176,16 @@ class OptCutsUVOptimizer:
         return os.path.join(tmpdir, "output", "finalResult_mesh.obj")
 
     @staticmethod
-    def _read_uv_from_obj(obj_path: str) -> Optional[np.ndarray]:
+    def _read_uv_from_obj(obj_path: str, expected_vertex_count: Optional[int] = None) -> Optional[np.ndarray]:
         try:
             loaded = trimesh.load(obj_path, process=False)
             if isinstance(loaded, trimesh.Trimesh):
                 vis = getattr(loaded, "visual", None)
                 uv = getattr(vis, "uv", None)
                 if uv is not None and len(uv) > 0:
-                    return np.asarray(uv, dtype=np.float64)
+                    uv = np.asarray(uv, dtype=np.float64)
+                    if expected_vertex_count is None or len(uv) == expected_vertex_count:
+                        return uv
         except Exception:
             pass
 
@@ -192,9 +194,84 @@ class OptCutsUVOptimizer:
                 mesh = meshio.read(obj_path)
                 if "obj:vt" in mesh.point_data:
                     uv = np.asarray(mesh.point_data["obj:vt"], dtype=np.float64)
-                    return uv[:, :2]
+                    if expected_vertex_count is None or len(uv) == expected_vertex_count:
+                        return uv[:, :2]
+            except Exception:
+                pass
+
+        if expected_vertex_count is not None:
+            try:
+                uv = OptCutsUVOptimizer._read_uv_from_obj_manual(obj_path, expected_vertex_count)
+                if uv is not None:
+                    return uv
             except Exception:
                 pass
 
         logger.warning("Failed to parse UV from OptCuts OBJ: %s", obj_path)
         return None
+
+    @staticmethod
+    def _read_uv_from_obj_manual(obj_path: str, expected_vertex_count: int) -> Optional[np.ndarray]:
+        texcoords = []
+        vertex_uv_accum = [[] for _ in range(expected_vertex_count)]
+        pending_pairs = []
+
+        with open(obj_path, "r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                if line.startswith("vt "):
+                    parts = line.strip().split()
+                    if len(parts) >= 3:
+                        try:
+                            texcoords.append((float(parts[1]), float(parts[2])))
+                        except ValueError:
+                            continue
+                    continue
+
+                if not line.startswith("f "):
+                    continue
+
+                face_tokens = line.strip().split()[1:]
+                for token in face_tokens:
+                    if "/" not in token:
+                        continue
+                    chunks = token.split("/")
+                    if len(chunks) < 2 or not chunks[0] or not chunks[1]:
+                        continue
+
+                    try:
+                        v_raw = int(chunks[0])
+                        vt_raw = int(chunks[1])
+                    except ValueError:
+                        continue
+
+                    pending_pairs.append((v_raw, vt_raw))
+
+        if not texcoords:
+            return None
+
+        for v_raw, vt_raw in pending_pairs:
+            v_idx = (expected_vertex_count + v_raw) if v_raw < 0 else (v_raw - 1)
+            vt_idx = (len(texcoords) + vt_raw) if vt_raw < 0 else (vt_raw - 1)
+            if 0 <= v_idx < expected_vertex_count and 0 <= vt_idx < len(texcoords):
+                vertex_uv_accum[v_idx].append(texcoords[vt_idx])
+
+        uv = np.zeros((expected_vertex_count, 2), dtype=np.float64)
+        assigned = 0
+        for i, candidates in enumerate(vertex_uv_accum):
+            if not candidates:
+                continue
+            assigned += 1
+            if len(candidates) == 1:
+                uv[i] = candidates[0]
+            else:
+                uv[i] = np.mean(np.asarray(candidates, dtype=np.float64), axis=0)
+
+        if assigned != expected_vertex_count:
+            logger.warning(
+                "OBJ UV manual parse assigned %d/%d vertices for %s",
+                assigned,
+                expected_vertex_count,
+                obj_path,
+            )
+            return None
+        return uv
