@@ -63,6 +63,10 @@ class InterfaceVisualizer:
             'HalogenBond': '#00CED1',
             'MetalCoordination': '#8B4513'
         }
+        self.patch_fill_palette = [
+            '#5A8DEE', '#58C4A3', '#F6C667', '#E78AC3', '#7CC6FE',
+            '#B8DE6F', '#FFA06B', '#A78BFA', '#7BDFF2', '#FF9AA2'
+        ]
 
         # Data store: {res_seq: set([interaction_types]) }
         self.prolif_data = None
@@ -188,12 +192,16 @@ class InterfaceVisualizer:
             'color': 'red', 'font_family': 'sans-serif', 'font_size': 9, 
             'color_by_type': False, 'active_types': self.interaction_types,
             'show_labels': True, 'label_mode': 'chain_a', 'avoid_label_overlap': True,
-            'label_offsets': {}
+            'label_offsets': {},
+            'mesh_fill_alpha': 0.20,
+            'mesh_line_alpha': 0.60
         }
         if style_config: style.update(style_config)
 
         n_patches = len(patches)
         fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        fig.patch.set_facecolor('white')
+        ax.set_facecolor('#fcfcfd')
         
         logger.info(f"Visualizing {n_patches} patches.")
 
@@ -209,7 +217,7 @@ class InterfaceVisualizer:
                     legend_handles.append(mpatches.Patch(color=self.interaction_colors.get(t, 'gray'), label=t))
             fig.legend(handles=legend_handles, loc='upper center', ncol=min(len(legend_handles), 5), frameon=False)
 
-        ax.set_title("Global UV Interaction Map")
+        ax.set_title("Global UV Interaction Map", fontsize=13, weight='semibold', color='#2f3640', pad=14)
         ax.set_aspect('equal')
         ax.axis('off')
         plt.tight_layout(rect=[0, 0, 1, 0.95])
@@ -224,7 +232,22 @@ class InterfaceVisualizer:
             uv = patch.metadata.get('uv')
         if uv is None: return found_types
 
-        ax.triplot(uv[:, 0], uv[:, 1], patch.faces, color='gray', alpha=0.15, lw=0.5, zorder=1)
+        patch_color = self.patch_fill_palette[(patch_id - 1) % len(self.patch_fill_palette)]
+        ax.tripcolor(
+            uv[:, 0], uv[:, 1], patch.faces,
+            color=patch_color,
+            shading='flat',
+            alpha=float(style.get('mesh_fill_alpha', 0.22)),
+            edgecolors='none',
+            zorder=0
+        )
+        ax.triplot(
+            uv[:, 0], uv[:, 1], patch.faces,
+            color='#2f3b52',
+            alpha=float(style.get('mesh_line_alpha', 0.60)),
+            lw=0.70,
+            zorder=1
+        )
         
         residue_data = self._collect_patch_residue_data(patch, uv, include_types=style['color_by_type'])
 
