@@ -234,12 +234,17 @@ class UIMixin:
             return
         file_path = filedialog.asksaveasfilename(
             defaultextension=".png",
-            filetypes=[("PNG Image", "*.png"), ("TIFF Image", "*.tif"), ("All Files", "*.*")],
+            filetypes=[("PNG Image", "*.png"), ("TIFF Image", "*.tif *.tiff"), ("All Files", "*.*")],
             title="Save Figure As"
         )
         if file_path:
             try:
-                self.current_fig.savefig(file_path, dpi=300)
+                ext = os.path.splitext(file_path)[1].lower()
+                save_kwargs = {'dpi': 300, 'bbox_inches': 'tight', 'facecolor': 'white'}
+                if ext in {'.tif', '.tiff'}:
+                    self.current_fig.savefig(file_path, format='tiff', pil_kwargs={'compression': 'tiff_lzw'}, **save_kwargs)
+                else:
+                    self.current_fig.savefig(file_path, **save_kwargs)
                 self.log(f"Figure saved to {file_path}")
                 messagebox.showinfo("Success", f"Image saved successfully to:\n{file_path}")
             except Exception as e:
