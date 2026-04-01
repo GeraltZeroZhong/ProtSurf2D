@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -28,7 +29,8 @@ class UVOptimizerConfig:
     patch_gap: float = 0.08
     optcuts_prog_mode: int = 1
     save_optcuts_frames: bool = False
-    optcuts_frame_stride: int = 5
+    # Export every frame by default. Larger values can be used to downsample.
+    optcuts_frame_stride: int = 1
     optcuts_frames_dir: str = ""
 
 
@@ -184,24 +186,22 @@ class OptCutsUVOptimizer:
             logger.info("OptCuts frame export enabled, but no PNG frames were found for patch %d.", patch_index)
             return
 
-        png_paths.sort()
         stride = max(1, int(self.config.optcuts_frame_stride))
-        frame_candidates = []
-        for p in png_paths:
-            base = os.path.splitext(os.path.basename(p))[0]
-            if base.isdigit():
-                frame_candidates.append((int(base), p))
 
-        selected = []
-        if frame_candidates:
-            frame_candidates.sort(key=lambda item: item[0])
-            ordered_paths = [path for _, path in frame_candidates]
-            # Sample by rank (every Nth frame after sorting), not by raw numeric ID.
-            # Some OptCuts runs start from 1 or use sparse numbering, and ID-based
-            # modulo can accidentally keep only one frame.
-            selected = ordered_paths[::stride]
-        else:
-            selected = png_paths[::stride]
+        def _frame_sort_key(path: str):
+            # OptCuts frame names vary by build/output folder and are not always pure digits.
+            # Build a natural sort key from all digit chunks in basename so names such as
+            # 1.png / 10.png / frame_2_0.png are ordered consistently.
+            base = os.path.splitext(os.path.basename(path))[0]
+            chunks = re.findall(r"\d+", base)
+            nums = tuple(int(c) for c in chunks) if chunks else ()
+            return (0 if chunks else 1, nums, base, path)
+
+        ordered_paths = sorted(png_paths, key=_frame_sort_key)
+        # Sample by rank (every Nth frame after sorting), not by raw numeric ID.
+        # This avoids dropping almost all frames when only a subset of files have
+        # digit-only basenames.
+        selected = ordered_paths[::stride]
         if not selected and png_paths:
             selected = [png_paths[0]]
 

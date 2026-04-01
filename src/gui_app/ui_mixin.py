@@ -76,7 +76,7 @@ class UIMixin:
 
         ttk.Label(param_frame, text="Frame Stride:").grid(row=10, column=0, sticky='w')
         self.entry_optcuts_frame_stride = ttk.Entry(param_frame, width=10)
-        self.entry_optcuts_frame_stride.insert(0, "5")
+        self.entry_optcuts_frame_stride.insert(0, "1")
         self.entry_optcuts_frame_stride.grid(row=10, column=1, pady=2)
 
         ttk.Label(param_frame, text="Frame Dir (optional):").grid(row=11, column=0, sticky='w')
@@ -298,7 +298,7 @@ class UIMixin:
             'filter_valid_only': bool(self.var_filter_valid_only.get()),
             'optcuts_bin': self.entry_optcuts_bin.get().strip() or "OptCuts_bin",
             'save_optcuts_frames': bool(self.var_save_optcuts_frames.get()),
-            'optcuts_frame_stride': int(self.entry_optcuts_frame_stride.get() or "5"),
+            'optcuts_frame_stride': int(self.entry_optcuts_frame_stride.get() or "1"),
             'optcuts_frames_dir': self.entry_optcuts_frames_dir.get().strip(),
             'auto_cutoff': bool(self.var_auto_cutoff.get()),
             'cutoff_start': float(self.entry_cutoff_start.get()),
