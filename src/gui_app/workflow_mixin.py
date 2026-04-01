@@ -1,6 +1,5 @@
 import csv
 import os
-import threading
 from tkinter import messagebox
 
 from src.io_loader import PDBLoader
@@ -46,85 +45,12 @@ class WorkflowMixin:
             return False, f"Failed to write CSV: {e}"
 
     def start_benchmark(self):
-        input_path = self.entry_file.get().strip()
-        if not input_path or not os.path.exists(input_path):
-            messagebox.showerror("Error", "Please select a valid PDB file or Folder.")
-            return
-
-        is_batch = os.path.isdir(input_path)
-        chain_a = self.entry_chain_a.get().strip()
-        chain_b = self.entry_chain_b.get().strip()
-        if not is_batch and (not chain_a or not chain_b):
-            messagebox.showerror("Error", "Please define Chain A and Chain B for single file mode.")
-            return
-
-        self.btn_run.config(state="disabled")
-        self.btn_bench.config(state="disabled")
-        self.btn_save.config(state="disabled")
-        self.progress.start(10)
-        self.log(f"Running Benchmark ({'Batch Folder' if is_batch else 'Single File'})...")
-
-        def run_thread():
-            try:
-                import benchmark
-                if is_batch:
-                    pdb_dir = input_path
-                    target_csv = os.path.join(pdb_dir, "benchmark_targets.csv")
-                    if not os.path.exists(target_csv):
-                        self.root.after(0, lambda: self.log("CSV missing. Generating from PDBs..."))
-                        success, msg = self._generate_auto_csv(pdb_dir)
-                        if not success:
-                            raise Exception(msg)
-                        self.root.after(0, lambda: self.log("CSV generated."))
-
-                    tasks = []
-                    with open(target_csv, 'r') as f:
-                        reader = csv.DictReader(f)
-                        for row in reader:
-                            tasks.append(row)
-                    total = len(tasks)
-                    if total == 0:
-                        raise Exception("CSV file is empty.")
-
-                    self.root.after(0, lambda: self.log(f"Found {total} tasks."))
-                    for i, task in enumerate(tasks):
-                        pdb_id = task['PDB']
-                        pdb_file = os.path.join(pdb_dir, f"{pdb_id}.pdb")
-                        if not os.path.exists(pdb_file):
-                            pdb_file = os.path.join(pdb_dir, pdb_id)
-                        if not os.path.exists(pdb_file):
-                            print(f"Skipping {pdb_id}, file missing.")
-                            continue
-                        self.root.after(0, lambda idx=i: self.log(f"Benchmarking {idx + 1}/{total}: {pdb_id}..."))
-                        try:
-                            runner = benchmark.BenchmarkRunner(pdb_file, task['Chain_A'], task['Chain_B'])
-                            runner.output_root = os.path.join(pdb_dir, "benchmark_results")
-                            runner.category = task.get('Category', 'Uncategorized')
-                            runner.category_dir = os.path.join(runner.output_root, runner.category)
-                            if not os.path.exists(runner.category_dir):
-                                os.makedirs(runner.category_dir)
-                            runner.output_csv = os.path.join(runner.category_dir, f"{pdb_id}_benchmark.csv")
-                            runner.run()
-                        except Exception as e:
-                            print(f"Error on {pdb_id}: {e}")
-                    msg = f"Batch Benchmark Complete!\nResults saved in {os.path.join(pdb_dir, 'benchmark_results')}"
-                else:
-                    runner = benchmark.BenchmarkRunner(input_path, chain_a, chain_b)
-                    runner.run()
-                    msg = "Single Benchmark Complete!\nSaved to default folder."
-
-                self.root.after(0, lambda: messagebox.showinfo("Success", msg))
-                self.root.after(0, lambda: self.log("Benchmark Finished."))
-            except Exception as e:
-                err_msg = str(e)
-                print(e)
-                self.root.after(0, lambda: messagebox.showerror("Benchmark Error", err_msg))
-            finally:
-                self.root.after(0, lambda: self.progress.stop())
-                self.root.after(0, lambda: self.btn_run.config(state="normal"))
-                self.root.after(0, lambda: self.btn_bench.config(state="normal"))
-
-        threading.Thread(target=run_thread, daemon=True).start()
+        messagebox.showinfo(
+            "Benchmark Removed",
+            "Benchmark workflow has been removed. "
+            "Please use the joint optimization pipeline directly from Run.",
+        )
+        self.log("Benchmark module removed; skipping benchmark workflow.")
 
     def generate_prolif_interactions(self, pdb_path, chain_a, chain_b):
         self.log("Checking ProLIF requirements...")
@@ -162,7 +88,13 @@ class WorkflowMixin:
                     use_optcuts=params.get('use_optcuts', False),
                     optcuts_bin=params.get('optcuts_bin', "OptCuts_bin"),
                     overlap_weight=params.get('overlap_weight', 1.0),
-                    max_iterations=params.get('uv_max_iter', 60)
+                    max_iterations=params.get('uv_max_iter', 60),
+                    seam_weight=params.get('seam_weight', 0.1),
+                    enable_seam_update=params.get('enable_seam_update', False),
+                    rotation_enabled=params.get('rotation_enabled', True),
+                    global_scale_enabled=params.get('global_scale_enabled', False),
+                    group_weight=params.get('group_weight', 0.0),
+                    patch_gap=params.get('patch_gap', 0.08),
                 )
             )
             viz = InterfaceVisualizer(
@@ -222,7 +154,43 @@ class WorkflowMixin:
                 valid_patches.append(p)
         if not valid_patches:
             return []
-        return optimizer.optimize_patches(valid_patches)
+        result = optimizer.optimize_patches(valid_patches)
+        self._log_joint_report(optimizer)
+        return result
+
+    def _log_joint_report(self, optimizer):
+        report = getattr(optimizer, "get_last_report", lambda: {})()
+        if not report:
+            self.log("Joint optimization report unavailable.")
+            return
+        pq = report.get("parameterization_quality", {})
+        tc = report.get("topology_complexity", {})
+        au = report.get("atlas_usability", {})
+        se = report.get("stability_efficiency", {})
+        self.log(
+            "[JointReport] flip={:.4f}, dist(mean/max/p95)=({:.4f}/{:.4f}/{:.4f})".format(
+                float(pq.get("flip_rate_mean", 1.0)),
+                float(pq.get("distortion", {}).get("mean", float("inf"))),
+                float(pq.get("distortion", {}).get("max", float("inf"))),
+                float(pq.get("distortion", {}).get("p95", float("inf"))),
+            )
+        )
+        self.log(
+            "[JointReport] seam_len={:.3f}, charts={}, overlap={:.4f}, padding_viol={}, util={:.4f}".format(
+                float(tc.get("seam_total_length", 0.0)),
+                int(tc.get("chart_count", 0)),
+                float(au.get("overlap_area", 0.0)),
+                int(au.get("padding_violations", 0)),
+                float(au.get("utilization", 0.0)),
+            )
+        )
+        self.log(
+            "[JointReport] obj_drop={:.4f}, total_time={:.3f}s, failure_rate={:.3f}".format(
+                float(se.get("objective_drop", 0.0)),
+                float(se.get("total_time_sec", 0.0)),
+                float(se.get("failure_rate", 0.0)),
+            )
+        )
 
     def _split_interfaces_by_point_count(self, patches, viz, min_points):
         valid = []

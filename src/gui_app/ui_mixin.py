@@ -165,7 +165,7 @@ class UIMixin:
         self.btn_run = ttk.Button(btn_frame, text="Run Single Analysis", command=self.start_analysis)
         self.btn_run.grid(row=0, column=0, columnspan=2, sticky='ew', pady=4)
 
-        self.btn_bench = ttk.Button(btn_frame, text="Run Benchmark Comparison", command=self.start_benchmark)
+        self.btn_bench = ttk.Button(btn_frame, text="Benchmark (Removed)", command=self.start_benchmark)
         self.btn_bench.grid(row=1, column=0, columnspan=2, sticky='ew', pady=4)
 
         self.btn_redraw = ttk.Button(btn_frame, text="Update Style Only", command=self.redraw_plot, state=tk.DISABLED)
@@ -181,7 +181,7 @@ class UIMixin:
         self.canvas_frame = ttk.Frame(self.right_frame)
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
         self.current_canvas = None
-        lbl = ttk.Label(self.canvas_frame, text="Load a PDB then click Run.\nFor Benchmark, select the folder containing PDBs.", font=("Arial", 12))
+        lbl = ttk.Label(self.canvas_frame, text="Load a PDB then click Run.\nJoint optimization metrics will be logged in the status area.", font=("Arial", 12))
         lbl.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
     def _init_status_bar(self):
