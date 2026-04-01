@@ -84,16 +84,7 @@ class WorkflowMixin:
             param = Parameterizer()
             optimizer = OptCutsUVOptimizer(
                 UVOptimizerConfig(
-                    enabled=False,
-                    use_optcuts=params.get('use_optcuts', False),
                     optcuts_bin=params.get('optcuts_bin', "OptCuts_bin"),
-                    overlap_weight=params.get('overlap_weight', 1.0),
-                    max_iterations=params.get('uv_max_iter', 60),
-                    seam_weight=params.get('seam_weight', 0.1),
-                    enable_seam_update=params.get('enable_seam_update', False),
-                    rotation_enabled=params.get('rotation_enabled', True),
-                    global_scale_enabled=params.get('global_scale_enabled', False),
-                    group_weight=params.get('group_weight', 0.0),
                     patch_gap=params.get('patch_gap', 0.08),
                 )
             )
