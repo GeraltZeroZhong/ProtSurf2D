@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import trimesh
+from PIL import Image
 
 try:
     import meshio
@@ -31,6 +32,9 @@ class UVOptimizerConfig:
     save_optcuts_frames: bool = False
     # Export every frame by default. Larger values can be used to downsample.
     optcuts_frame_stride: int = 1
+    # Upscale exported frames when the source image is too small.
+    # 0 disables upscaling.
+    optcuts_min_frame_long_edge: int = 1600
     optcuts_frames_dir: str = ""
 
 
@@ -178,10 +182,35 @@ class OptCutsUVOptimizer:
         os.makedirs(output_dir, exist_ok=True)
 
         png_paths = []
+        gif_paths = []
         for root, _, files in os.walk(tmpdir):
             for name in files:
                 if name.lower().endswith(".png"):
                     png_paths.append(os.path.join(root, name))
+                elif name.lower().endswith(".gif"):
+                    gif_paths.append(os.path.join(root, name))
+
+        patch_dir = os.path.join(output_dir, f"patch_{patch_index:03d}")
+        os.makedirs(patch_dir, exist_ok=True)
+
+        # OptCuts' libigl viewer timeline is usually saved as anim.gif.
+        # Prefer extracting those frames (true viewer snapshots) over static
+        # diagnostics such as *_seam.png / *_distortion.png / finalResult.png.
+        extracted_gif_frames = self._export_frames_from_gifs(
+            gif_paths=gif_paths,
+            patch_dir=patch_dir,
+            stride=max(1, int(self.config.optcuts_frame_stride)),
+            min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
+        )
+        if extracted_gif_frames > 0:
+            logger.info(
+                "OptCuts viewer frames exported for patch %d: %d image(s) -> %s",
+                patch_index,
+                extracted_gif_frames,
+                patch_dir,
+            )
+            return
+
         if not png_paths:
             logger.info("OptCuts frame export enabled, but no PNG frames were found for patch %d.", patch_index)
             return
@@ -198,22 +227,41 @@ class OptCutsUVOptimizer:
             return (0 if chunks else 1, nums, base, path)
 
         ordered_paths = sorted(png_paths, key=_frame_sort_key)
+        # Fallback path: keep likely viewer snapshots and drop known static diagnostics.
+        # Typical diagnostics from OptCuts are:
+        # - *_distortion.png
+        # - *_seam.png
+        # - finalResult.png
+        # while viewer snapshots are commonly numeric basenames such as 0.png, 1.png, ...
+        viewer_like = []
+        for path in ordered_paths:
+            base = os.path.basename(path).lower()
+            stem = os.path.splitext(base)[0]
+            if base == "finalresult.png" or stem.endswith("_distortion") or stem.endswith("_seam"):
+                continue
+            if stem.isdigit():
+                viewer_like.append(path)
+
+        frame_candidates = viewer_like if viewer_like else ordered_paths
         # Sample by rank (every Nth frame after sorting), not by raw numeric ID.
         # This avoids dropping almost all frames when only a subset of files have
         # digit-only basenames.
-        selected = ordered_paths[::stride]
+        selected = frame_candidates[::stride]
         if not selected and png_paths:
             selected = [png_paths[0]]
 
-        patch_dir = os.path.join(output_dir, f"patch_{patch_index:03d}")
-        os.makedirs(patch_dir, exist_ok=True)
         # Different OptCuts subfolders can contain frames with the same basename
         # (e.g. multiple "0.png"). Copying by basename would overwrite files and
         # make it look like only one image was exported. Use deterministic unique names.
         for idx, src_path in enumerate(selected):
             base_name = os.path.basename(src_path)
             dst_name = f"{idx:04d}_{base_name}"
-            shutil.copy2(src_path, os.path.join(patch_dir, dst_name))
+            dst_path = os.path.join(patch_dir, dst_name)
+            self._copy_png_with_min_resolution(
+                src_path=src_path,
+                dst_path=dst_path,
+                min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
+            )
 
         final_png = self._find_first_existing_file(
             [
@@ -222,7 +270,11 @@ class OptCutsUVOptimizer:
             ]
         )
         if final_png:
-            shutil.copy2(final_png, os.path.join(patch_dir, "finalResult.png"))
+            self._copy_png_with_min_resolution(
+                src_path=final_png,
+                dst_path=os.path.join(patch_dir, "finalResult.png"),
+                min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
+            )
 
         logger.info(
             "OptCuts frames exported for patch %d: %d image(s) -> %s",
@@ -230,6 +282,53 @@ class OptCutsUVOptimizer:
             len(selected),
             patch_dir,
         )
+        if not viewer_like:
+            logger.warning(
+                "No viewer-like PNG sequence found for patch %d. Exported fallback PNGs; "
+                "the current OptCuts build may only emit diagnostic images.",
+                patch_index,
+            )
+
+    @staticmethod
+    def _export_frames_from_gifs(gif_paths: List[str], patch_dir: str, stride: int, min_long_edge: int) -> int:
+        if not gif_paths:
+            return 0
+
+        def _gif_sort_key(path: str):
+            base = os.path.basename(path).lower()
+            return (0 if base == "anim.gif" else 1, base, path)
+
+        frame_count = 0
+        ordered_gifs = sorted(gif_paths, key=_gif_sort_key)
+        for gif_idx, gif_path in enumerate(ordered_gifs):
+            with Image.open(gif_path) as gif:
+                total_frames = getattr(gif, "n_frames", 1)
+                for frame_idx in range(0, total_frames, stride):
+                    gif.seek(frame_idx)
+                    frame = gif.convert("RGBA")
+                    frame = OptCutsUVOptimizer._resize_image_if_needed(frame, min_long_edge=min_long_edge)
+                    out_name = f"{frame_count:04d}_viewer_g{gif_idx:02d}_f{frame_idx:05d}.png"
+                    frame.save(os.path.join(patch_dir, out_name))
+                    frame_count += 1
+        return frame_count
+
+    @staticmethod
+    def _resize_image_if_needed(image: Image.Image, min_long_edge: int) -> Image.Image:
+        if min_long_edge <= 0:
+            return image
+        w, h = image.size
+        long_edge = max(w, h)
+        if long_edge >= min_long_edge or long_edge <= 0:
+            return image
+        scale = float(min_long_edge) / float(long_edge)
+        new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
+        return image.resize(new_size, Image.Resampling.LANCZOS)
+
+    @staticmethod
+    def _copy_png_with_min_resolution(src_path: str, dst_path: str, min_long_edge: int) -> None:
+        with Image.open(src_path) as img:
+            out = OptCutsUVOptimizer._resize_image_if_needed(img.convert("RGBA"), min_long_edge=min_long_edge)
+            out.save(dst_path)
 
     @staticmethod
     def _find_first_existing_file(paths: List[str]) -> Optional[str]:
