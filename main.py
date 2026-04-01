@@ -33,16 +33,8 @@ def main():
     parser.add_argument("--res", type=float, default=1.0, help="Grid resolution for surface generation (Angstroms)")
     parser.add_argument("--sigma", type=float, default=1.5, help="Gaussian smoothing sigma")
     parser.add_argument("--output", "-o", default="interface_map.png", help="Output image filename")
-    parser.add_argument("--enable-joint-opt", action="store_true", help="Enable joint global UV optimization")
-    parser.add_argument("--disable-optcuts", action="store_true", help="Disable external OptCuts binary call")
+    parser.add_argument("--disable-optcuts", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--optcuts-bin", default="OptCuts_bin", help="Path/name for OptCuts executable")
-    parser.add_argument("--overlap-weight", type=float, default=1.0, help="Overlap penalty weight for joint UV optimization")
-    parser.add_argument("--uv-max-iter", type=int, default=60, help="Max iterations for joint UV optimization")
-    parser.add_argument("--seam-weight", type=float, default=0.1, help="Seam regularization weight in alternating optimization")
-    parser.add_argument("--enable-seam-update", action="store_true", help="Enable seam-update step in alternating optimization")
-    parser.add_argument("--disable-rotation", action="store_true", help="Disable chart rotation in global placement step")
-    parser.add_argument("--enable-global-scale", action="store_true", help="Enable global atlas scaling degree of freedom")
-    parser.add_argument("--group-weight", type=float, default=0.0, help="Grouping constraint weight")
     parser.add_argument("--patch-gap", type=float, default=0.08, help="Padding/min-gap between charts in global UV")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
     
@@ -113,20 +105,14 @@ def main():
         logger.error("All patches failed to parameterize.")
         sys.exit(1)
 
-    # --- Step 5: Joint UV Optimization ---
-    logger.info("Running global UV layout optimization...")
+    # --- Step 5: OptCuts UV Optimization ---
+    if args.disable_optcuts:
+        logger.error("--disable-optcuts is no longer supported. This pipeline now requires OptCuts.")
+        sys.exit(2)
+    logger.info("Running OptCuts UV optimization...")
     optimizer = OptCutsUVOptimizer(
         UVOptimizerConfig(
-            enabled=args.enable_joint_opt,
-            use_optcuts=not args.disable_optcuts,
             optcuts_bin=args.optcuts_bin,
-            overlap_weight=args.overlap_weight,
-            max_iterations=args.uv_max_iter,
-            seam_weight=args.seam_weight,
-            enable_seam_update=args.enable_seam_update,
-            rotation_enabled=not args.disable_rotation,
-            global_scale_enabled=args.enable_global_scale,
-            group_weight=args.group_weight,
             patch_gap=args.patch_gap,
         )
     )
