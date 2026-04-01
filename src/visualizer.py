@@ -41,8 +41,6 @@ class InterfaceVisualizer:
         self.interaction_types = [
             'VdWContact',
             'HydrogenBond',
-            'HBAcceptor',
-            'HBDonor',
             'Hydrophobic',
             'PiStacking',
             'PiCation',
@@ -50,15 +48,12 @@ class InterfaceVisualizer:
             'Cationic',
             'Anionic',
             'HalogenBond',
-            'MetalAcceptor',
-            'MetalDonor'
+            'MetalCoordination'
         ]
         
         self.interaction_colors = {
             'VdWContact': '#008080',
             'HydrogenBond': '#0000FF',
-            'HBAcceptor': '#1E90FF',
-            'HBDonor': '#4169E1',
             'Hydrophobic': '#808080',
             'PiStacking': '#8A2BE2',
             'PiCation': '#FF4500',
@@ -66,8 +61,7 @@ class InterfaceVisualizer:
             'Cationic': '#FFA500',
             'Anionic': '#FF8C00',
             'HalogenBond': '#00CED1',
-            'MetalAcceptor': '#A52A2A',
-            'MetalDonor': '#8B4513'
+            'MetalCoordination': '#8B4513'
         }
 
         # Data store: {res_seq: set([interaction_types]) }
@@ -171,7 +165,7 @@ class InterfaceVisualizer:
 
         if dist < 3.8:
             if elem_A in self.polar_atoms and elem_B in self.polar_atoms: return 'HydrogenBond'
-            if (elem_A == 'C' and elem_B in self.polar_atoms) or (elem_B == 'C' and elem_A in self.polar_atoms): return 'HBAcceptor'
+            if (elem_A == 'C' and elem_B in self.polar_atoms) or (elem_B == 'C' and elem_A in self.polar_atoms): return 'HydrogenBond'
 
         if dist < 4.5 and (is_aro_A or is_aro_B):
             if (is_aro_A and name_B in self.sulfur_atoms) or (name_A in self.sulfur_atoms and is_aro_B): return 'PiStacking'
