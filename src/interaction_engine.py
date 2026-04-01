@@ -102,8 +102,41 @@ def generate_prolif_interactions(pdb_path, chain_a, chain_b, log=None):
         log.warning("ProLIF atom selection failed for one of the target chains.")
         return None
 
-    mol_a = plf.Molecule.from_mda(chain_a_atoms)
-    mol_b = plf.Molecule.from_mda(chain_b_atoms)
+    def _mda_to_prolif_with_explicit_hydrogen(atom_group, chain_label):
+        """
+        Convert an MDAnalysis AtomGroup to a ProLIF molecule while ensuring
+        hydrogens are explicit. Some trajectories/topologies omit explicit H,
+        which breaks bond-order/charge inference required by ProLIF.
+        """
+        try:
+            return plf.Molecule.from_mda(atom_group)
+        except Exception as exc:
+            msg = str(exc)
+            if "No hydrogen atom could be found in the topology" not in msg:
+                raise
+
+            log.warning(
+                "Chain %s has no explicit hydrogens in topology; "
+                "retrying conversion with implicit H allowed, then adding explicit H.",
+                chain_label,
+            )
+            # Allow conversion from topologies with implicit hydrogens first.
+            mol = plf.Molecule.from_mda(atom_group, NoImplicit=False, force=True)
+            try:
+                from rdkit import Chem
+
+                mol = plf.Molecule(Chem.AddHs(mol, addCoords=True))
+            except Exception as add_h_exc:
+                log.warning(
+                    "Failed to add explicit hydrogens for chain %s (%s); "
+                    "continuing with implicit-hydrogen representation.",
+                    chain_label,
+                    add_h_exc,
+                )
+            return mol
+
+    mol_a = _mda_to_prolif_with_explicit_hydrogen(chain_a_atoms, chain_a)
+    mol_b = _mda_to_prolif_with_explicit_hydrogen(chain_b_atoms, chain_b)
     fp = plf.Fingerprint()
     fp.run_from_iterable([mol_b], mol_a)
     records = _to_records(fp.to_dataframe())
