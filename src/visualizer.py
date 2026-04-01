@@ -193,6 +193,7 @@ class InterfaceVisualizer:
             'color': 'red', 'font_family': 'sans-serif', 'font_size': 9, 
             'color_by_type': False, 'active_types': self.interaction_types,
             'show_labels': True, 'label_mode': 'chain_a', 'avoid_label_overlap': True,
+            'use_uv_atlas': True,
             'label_offsets': {},
             'mesh_fill_alpha': 0.20,
             'mesh_line_alpha': 0.60
@@ -200,16 +201,37 @@ class InterfaceVisualizer:
         if style_config: style.update(style_config)
 
         n_patches = len(patches)
-        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        use_uv_atlas = bool(style.get('use_uv_atlas', True))
+        if use_uv_atlas:
+            fig, axes = plt.subplots(1, 1, figsize=(10, 8))
+            axes = np.asarray([axes], dtype=object)
+        else:
+            n_cols = min(3, n_patches)
+            n_rows = int(np.ceil(n_patches / n_cols))
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(4.8 * n_cols, 4.2 * n_rows))
+            axes = np.atleast_1d(axes).flatten()
         fig.patch.set_facecolor('white')
-        ax.set_facecolor('#fcfcfd')
-        
-        logger.info(f"Visualizing {n_patches} patches.")
+
+        logger.info(
+            "Visualizing %d patches in %s mode.",
+            n_patches,
+            "atlas" if use_uv_atlas else "separate",
+        )
 
         used_interactions = set()
         for i, patch in enumerate(patches):
-            found = self._draw_single_patch(ax, patch, i + 1, style)
+            ax = axes[0] if use_uv_atlas else axes[i]
+            ax.set_facecolor('#fcfcfd')
+            found = self._draw_single_patch(ax, patch, i + 1, style, use_uv_atlas=use_uv_atlas)
             used_interactions.update(found)
+            if not use_uv_atlas:
+                ax.set_title(f"Patch {i + 1}", fontsize=10, weight='semibold', color='#2f3640')
+                ax.set_aspect('equal')
+                ax.axis('off')
+
+        if not use_uv_atlas:
+            for extra_ax in axes[n_patches:]:
+                extra_ax.axis('off')
 
         if style['color_by_type'] and used_interactions:
             legend_handles = []
@@ -218,19 +240,24 @@ class InterfaceVisualizer:
                     legend_handles.append(mpatches.Patch(color=self.interaction_colors.get(t, 'gray'), label=t))
             fig.legend(handles=legend_handles, loc='upper center', ncol=min(len(legend_handles), 5), frameon=False)
 
-        ax.set_title("Global UV Interaction Map", fontsize=13, weight='semibold', color='#2f3640', pad=14)
-        ax.set_aspect('equal')
-        ax.axis('off')
+        if use_uv_atlas:
+            axes[0].set_title("Global UV Interaction Map", fontsize=13, weight='semibold', color='#2f3640', pad=14)
+            axes[0].set_aspect('equal')
+            axes[0].axis('off')
+
         plt.tight_layout(rect=[0, 0, 1, 0.95])
         if output_file: plt.savefig(output_file, dpi=300)
         if show: plt.show()
         return fig
 
-    def _draw_single_patch(self, ax, patch, patch_id, style):
+    def _draw_single_patch(self, ax, patch, patch_id, style, use_uv_atlas=True):
         found_types = set()
-        uv = patch.metadata.get('uv_global')
-        if uv is None:
+        if use_uv_atlas:
+            uv = patch.metadata.get('uv_global')
+        else:
             uv = patch.metadata.get('uv')
+        if uv is None:
+            uv = patch.metadata.get('uv_global')
         if uv is None: return found_types
 
         patch_color = self.patch_fill_palette[(patch_id - 1) % len(self.patch_fill_palette)]

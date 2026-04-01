@@ -156,6 +156,14 @@ class UIMixin:
         self.var_avoid_overlap = tk.BooleanVar(value=True)
         ttk.Checkbutton(style_frame, text="Reduce Label Overlap", variable=self.var_avoid_overlap, command=self.redraw_plot).pack(anchor=tk.W, pady=2)
 
+        self.var_use_uv_atlas = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            style_frame,
+            text="Merge Patches into UV Atlas View",
+            variable=self.var_use_uv_atlas,
+            command=self.redraw_plot
+        ).pack(anchor=tk.W, pady=2)
+
         btn_frame = ttk.Frame(self.left_frame)
         btn_frame.pack(fill=tk.X, padx=10, pady=10)
         btn_frame.columnconfigure(0, weight=1)
@@ -243,6 +251,7 @@ class UIMixin:
             'show_labels': bool(self.var_show_labels.get()),
             'label_mode': self.label_mode_options.get(self.combo_label_mode.get(), "chain_a"),
             'avoid_label_overlap': bool(self.var_avoid_overlap.get()),
+            'use_uv_atlas': bool(self.var_use_uv_atlas.get()),
             'label_offsets': dict(self.label_offsets)
         }
 
