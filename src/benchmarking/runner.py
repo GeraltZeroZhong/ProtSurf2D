@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -44,16 +44,21 @@ class BenchmarkRunner:
         if not pdb_files:
             raise ValueError("No .pdb files found for benchmark.")
 
-        worker_count = self._resolve_worker_count(len(pdb_files))
+        prepared_jobs, preprocessing_log = self._prepare_benchmark_jobs(pdb_files)
+        if not prepared_jobs:
+            raise ValueError("No valid .pdb files after preprocessing: each file must contain at least two protein chains.")
+
+        worker_count = self._resolve_worker_count(len(prepared_jobs))
         self.log(f"[Benchmark] Running with {worker_count} worker thread(s).")
-        all_results = self._run_files_concurrently(pdb_files, worker_count)
+        all_results = self._run_files_concurrently(prepared_jobs, worker_count)
 
         output = {
             "created_at": datetime.utcnow().isoformat() + "Z",
             "config": asdict(self.config),
+            "preprocessing": preprocessing_log,
             "files": all_results,
             "summary": aggregate_results(all_results),
-            "sensitivity": self._run_sensitivity(pdb_files),
+            "sensitivity": self._run_sensitivity(prepared_jobs),
         }
 
         with open(os.path.join(self.config.output_root, "benchmark_report.json"), "w", encoding="utf-8") as f:
@@ -61,14 +66,17 @@ class BenchmarkRunner:
         write_csv(all_results, self.config.output_root)
         return output
 
-    def _run_files_concurrently(self, pdb_files: List[str], worker_count: int) -> List[Dict[str, object]]:
-        all_results: List[Optional[Dict[str, object]]] = [None] * len(pdb_files)
+    def _run_files_concurrently(self, jobs: List[Dict[str, object]], worker_count: int) -> List[Dict[str, object]]:
+        all_results: List[Optional[Dict[str, object]]] = [None] * len(jobs)
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             future_to_job = {}
-            for idx, pdb_name in enumerate(pdb_files, start=1):
+            for idx, job in enumerate(jobs, start=1):
+                pdb_name = str(job["pdb"])
                 pdb_path = os.path.join(self.config.input_folder, pdb_name)
-                self.log(f"[Benchmark] ({idx}/{len(pdb_files)}) Queued {pdb_name}")
-                future = executor.submit(self._run_single, pdb_path)
+                chain_a = str(job["chain_a"])
+                chain_b = str(job["chain_b"])
+                self.log(f"[Benchmark] ({idx}/{len(jobs)}) Queued {pdb_name} with chains {chain_a}/{chain_b}")
+                future = executor.submit(self._run_single, pdb_path, chain_a, chain_b)
                 future_to_job[future] = (idx - 1, pdb_name)
 
             for future in as_completed(future_to_job):
@@ -84,14 +92,14 @@ class BenchmarkRunner:
             configured_workers = os.cpu_count() or 1
         return max(1, min(int(configured_workers), int(file_count)))
 
-    def _run_single(self, pdb_path: str) -> Dict[str, object]:
+    def _run_single(self, pdb_path: str, chain_a: str, chain_b: str) -> Dict[str, object]:
         mem_peak = self._memory_rss_mb()
 
         stage = {}
         t0, c0 = time.perf_counter(), time.process_time()
         loader = PDBLoader(pdb_path)
-        coords_a, _ = loader.get_chain_data(self.config.chain_a)
-        coords_b, _ = loader.get_chain_data(self.config.chain_b)
+        coords_a, _ = loader.get_chain_data(chain_a)
+        coords_b, _ = loader.get_chain_data(chain_b)
         surf_gen = SurfaceGenerator(coords_a)
         mesh_a = surf_gen.generate_mesh(grid_resolution=self.config.res, sigma=self.config.sigma)
         if mesh_a is None or len(mesh_a.vertices) == 0:
@@ -101,7 +109,12 @@ class BenchmarkRunner:
         stage["mesh_and_patch"] = self._stage_stats(t0, c0)
         mem_peak = max(mem_peak, self._memory_rss_mb())
         if not patches:
-            return {"pdb": os.path.basename(pdb_path), "patch_count": 0, "error": "No interface patches found"}
+            return {
+                "pdb": os.path.basename(pdb_path),
+                "chain_selection": {"chain_a": chain_a, "chain_b": chain_b},
+                "patch_count": 0,
+                "error": "No interface patches found",
+            }
 
         patch_results = {}
         for method in ("lscm", "harmonic", "spherical", "cylindrical"):
@@ -131,6 +144,7 @@ class BenchmarkRunner:
 
         result = {
             "pdb": os.path.basename(pdb_path),
+            "chain_selection": {"chain_a": chain_a, "chain_b": chain_b},
             "patch_count": len(patches),
             "mesh_stats": {"vertex_count": int(len(mesh_a.vertices)), "face_count": int(len(mesh_a.faces))},
             "lscm_raw": lscm_raw_quality,
@@ -184,6 +198,80 @@ class BenchmarkRunner:
             "atlas_trainability": atlas_trainability,
         }
         return result
+
+    def _prepare_benchmark_jobs(self, pdb_files: List[str]) -> Tuple[List[Dict[str, object]], Dict[str, object]]:
+        accepted_jobs: List[Dict[str, object]] = []
+        skipped_files: List[Dict[str, str]] = []
+
+        for pdb_name in pdb_files:
+            pdb_path = os.path.join(self.config.input_folder, pdb_name)
+            try:
+                loader = PDBLoader(pdb_path)
+                chain_ids = loader.get_protein_chain_ids()
+            except Exception as exc:
+                skipped_files.append({"pdb": pdb_name, "reason": f"Failed to parse PDB: {exc}"})
+                self.log(f"[Benchmark][Preprocess] Skipped {pdb_name}: failed to parse ({exc})")
+                continue
+
+            if len(chain_ids) < 2:
+                skipped_files.append({"pdb": pdb_name, "reason": f"Need >=2 protein chains, found {len(chain_ids)}"})
+                self.log(f"[Benchmark][Preprocess] Skipped {pdb_name}: found {len(chain_ids)} protein chain(s)")
+                continue
+
+            if "A" in chain_ids and "B" in chain_ids:
+                chain_a, chain_b = "A", "B"
+                selection_mode = "prefer_AB"
+            else:
+                chain_a, chain_b = chain_ids[0], chain_ids[1]
+                selection_mode = "first_two_chains"
+
+            try:
+                coords_a, _ = loader.get_chain_data(chain_a)
+                coords_b, _ = loader.get_chain_data(chain_b)
+                if len(coords_a) == 0 or len(coords_b) == 0:
+                    skipped_files.append(
+                        {
+                            "pdb": pdb_name,
+                            "reason": f"Selected chains contain no standard atoms: {chain_a}({len(coords_a)}), {chain_b}({len(coords_b)})",
+                        }
+                    )
+                    self.log(
+                        f"[Benchmark][Preprocess] Skipped {pdb_name}: selected chains empty "
+                        f"{chain_a}({len(coords_a)}), {chain_b}({len(coords_b)})"
+                    )
+                    continue
+            except Exception as exc:
+                skipped_files.append({"pdb": pdb_name, "reason": f"Selected chain extraction failed: {exc}"})
+                self.log(f"[Benchmark][Preprocess] Skipped {pdb_name}: selected chain extraction failed ({exc})")
+                continue
+
+            accepted_jobs.append(
+                {
+                    "pdb": pdb_name,
+                    "chain_a": chain_a,
+                    "chain_b": chain_b,
+                    "selection_mode": selection_mode,
+                    "available_chains": chain_ids,
+                }
+            )
+            self.log(
+                f"[Benchmark][Preprocess] Accepted {pdb_name}: using chains {chain_a}/{chain_b} "
+                f"({selection_mode})"
+            )
+
+        summary = {
+            "total_files": len(pdb_files),
+            "accepted_files": len(accepted_jobs),
+            "skipped_files": len(skipped_files),
+            "accepted": accepted_jobs,
+            "skipped": skipped_files,
+            "rules": [
+                "File must contain at least two protein chains.",
+                "If both A and B chains exist, use A/B.",
+                "Otherwise use the first two protein chains discovered in structure order.",
+            ],
+        }
+        return accepted_jobs, summary
 
     def _parameterize_patches(self, patches, method: str):
         parameterizer = Parameterizer()
@@ -245,7 +333,7 @@ class BenchmarkRunner:
         )
         return optimizer.optimize_patches([p.copy() for p in patches])
 
-    def _run_sensitivity(self, pdb_files: List[str]) -> Dict[str, object]:
+    def _run_sensitivity(self, jobs: List[Dict[str, object]]) -> Dict[str, object]:
         sweep = {"cutoff": self.config.cutoff_sweep, "sigma": self.config.sigma_sweep, "res": self.config.res_sweep}
         if all(v is None for v in sweep.values()):
             return {"enabled": False}
@@ -256,11 +344,17 @@ class BenchmarkRunner:
             for val in values:
                 cfg = BenchmarkConfig(**{**asdict(self.config), name: float(val), "cutoff_sweep": None, "sigma_sweep": None, "res_sweep": None})
                 runner = BenchmarkRunner(cfg, log_fn=lambda *_: None)
-                subset = pdb_files[: min(3, len(pdb_files))]
+                subset = jobs[: min(3, len(jobs))]
                 rows = []
-                for fn in subset:
+                for job in subset:
                     try:
-                        rows.append(runner._run_single(os.path.join(cfg.input_folder, fn)))
+                        rows.append(
+                            runner._run_single(
+                                os.path.join(cfg.input_folder, str(job["pdb"])),
+                                str(job["chain_a"]),
+                                str(job["chain_b"]),
+                            )
+                        )
                     except Exception:
                         continue
                 valid = [r for r in rows if "error" not in r]

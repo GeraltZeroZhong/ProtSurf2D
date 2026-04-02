@@ -51,6 +51,17 @@ class PDBLoader:
                 
         return np.array(coords), atoms
 
+    def get_protein_chain_ids(self):
+        """
+        Return chain IDs that contain at least one standard residue.
+        """
+        chain_ids = []
+        for chain in self.model:
+            has_standard_residue = any(residue.id[0] == " " for residue in chain)
+            if has_standard_residue:
+                chain_ids.append(chain.id)
+        return chain_ids
+
 # --- Unit Test ---
 if __name__ == "__main__":
     print("This module is a helper for loading PDB files.")
