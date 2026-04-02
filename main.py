@@ -42,6 +42,19 @@ def main():
     setup_logging(args.verbose)
     logger = logging.getLogger("Main")
 
+    if args.cutoff <= 0:
+        logger.error("--cutoff must be > 0.")
+        sys.exit(2)
+    if args.res <= 0:
+        logger.error("--res must be > 0.")
+        sys.exit(2)
+    if args.sigma <= 0:
+        logger.error("--sigma must be > 0.")
+        sys.exit(2)
+    if args.patch_gap < 0:
+        logger.error("--patch-gap must be >= 0.")
+        sys.exit(2)
+
     start_time = time.time()
 
     # --- Step 0: ProLIF Handling ---
@@ -61,6 +74,10 @@ def main():
         loader = PDBLoader(args.pdb_file)
         coords_A, atoms_A = loader.get_chain_data(args.chain_a)
         coords_B, atoms_B = loader.get_chain_data(args.chain_b)
+        if len(coords_A) == 0:
+            raise ValueError(f"Chain {args.chain_a} has no standard protein atoms.")
+        if len(coords_B) == 0:
+            raise ValueError(f"Chain {args.chain_b} has no standard protein atoms.")
         logger.info(f"Loaded Chain {args.chain_a}: {len(coords_A)} atoms")
         logger.info(f"Loaded Chain {args.chain_b}: {len(coords_B)} atoms")
     except Exception as e:

@@ -28,9 +28,18 @@ class SurfaceGenerator:
         """
         num_atoms = len(self.coords)
         logger.info(f"Generating surface from {num_atoms} atoms...")
-        
+
         if num_atoms == 0:
             logger.error("No coordinates provided.")
+            return None
+        if grid_resolution <= 0:
+            logger.error("grid_resolution must be > 0.")
+            return None
+        if sigma <= 0:
+            logger.error("sigma must be > 0.")
+            return None
+        if not np.isfinite(self.coords).all():
+            logger.error("Coordinates contain non-finite values.")
             return None
 
         # 1. Define Grid Bounds with Padding
@@ -40,6 +49,17 @@ class SurfaceGenerator:
         
         # Calculate grid shape
         shape = np.ceil((max_bound - min_bound) / grid_resolution).astype(int)
+        if np.any(shape <= 0):
+            logger.error(f"Invalid grid shape computed: {shape}")
+            return None
+        max_voxels = 120_000_000  # ~0.9GB float64 density before temporary arrays.
+        voxel_count = int(np.prod(shape, dtype=np.int64))
+        if voxel_count > max_voxels:
+            logger.error(
+                "Grid is too large (%d voxels). Increase --res to avoid excessive memory use.",
+                voxel_count,
+            )
+            return None
         logger.info(f"Grid shape: {shape}, Resolution: {grid_resolution}A")
 
         # 2. Fast Voxelization

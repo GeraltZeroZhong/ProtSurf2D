@@ -49,7 +49,9 @@ class PDBLoader:
                 atoms.append(atom)
                 coords.append(atom.get_coord())
                 
-        return np.array(coords), atoms
+        if len(coords) == 0:
+            return np.empty((0, 3), dtype=float), atoms
+        return np.asarray(coords, dtype=float), atoms
 
     def get_protein_chain_ids(self):
         """
