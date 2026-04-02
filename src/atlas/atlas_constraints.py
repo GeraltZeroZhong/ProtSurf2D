@@ -5,7 +5,7 @@ from typing import Dict, Iterable, Optional, Tuple
 
 import numpy as np
 
-from src.atlas_state import AtlasState
+from src.atlas.atlas_state import AtlasState
 
 
 @dataclass

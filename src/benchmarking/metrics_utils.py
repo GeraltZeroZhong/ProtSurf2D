@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from src.metrics import UVAtlasMetrics
+from src.atlas.metrics import UVAtlasMetrics
 
 
 def triangle_local_coords(v0: np.ndarray, v1: np.ndarray, v2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
