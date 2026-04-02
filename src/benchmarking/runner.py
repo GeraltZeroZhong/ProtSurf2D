@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
@@ -43,11 +44,9 @@ class BenchmarkRunner:
         if not pdb_files:
             raise ValueError("No .pdb files found for benchmark.")
 
-        all_results = []
-        for idx, pdb_name in enumerate(pdb_files, start=1):
-            pdb_path = os.path.join(self.config.input_folder, pdb_name)
-            self.log(f"[Benchmark] ({idx}/{len(pdb_files)}) {pdb_name}")
-            all_results.append(self._run_single(pdb_path))
+        worker_count = self._resolve_worker_count(len(pdb_files))
+        self.log(f"[Benchmark] Running with {worker_count} worker thread(s).")
+        all_results = self._run_files_concurrently(pdb_files, worker_count)
 
         output = {
             "created_at": datetime.utcnow().isoformat() + "Z",
@@ -61,6 +60,29 @@ class BenchmarkRunner:
             json.dump(output, f, indent=2)
         write_csv(all_results, self.config.output_root)
         return output
+
+    def _run_files_concurrently(self, pdb_files: List[str], worker_count: int) -> List[Dict[str, object]]:
+        all_results: List[Optional[Dict[str, object]]] = [None] * len(pdb_files)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_to_job = {}
+            for idx, pdb_name in enumerate(pdb_files, start=1):
+                pdb_path = os.path.join(self.config.input_folder, pdb_name)
+                self.log(f"[Benchmark] ({idx}/{len(pdb_files)}) Queued {pdb_name}")
+                future = executor.submit(self._run_single, pdb_path)
+                future_to_job[future] = (idx - 1, pdb_name)
+
+            for future in as_completed(future_to_job):
+                out_idx, pdb_name = future_to_job[future]
+                self.log(f"[Benchmark] Finished {pdb_name}")
+                all_results[out_idx] = future.result()
+
+        return [r for r in all_results if r is not None]
+
+    def _resolve_worker_count(self, file_count: int) -> int:
+        configured_workers = self.config.max_workers
+        if configured_workers is None:
+            configured_workers = os.cpu_count() or 1
+        return max(1, min(int(configured_workers), int(file_count)))
 
     def _run_single(self, pdb_path: str) -> Dict[str, object]:
         mem_peak = self._memory_rss_mb()
