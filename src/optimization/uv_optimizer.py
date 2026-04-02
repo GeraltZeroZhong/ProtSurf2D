@@ -1,6 +1,6 @@
 """Backward-compatible import shim for UV optimizer.
 
-Primary implementation now lives under src/optcuts/ for better modular management.
+Primary implementation now lives under ``src/optimization/optcuts/``.
 """
 
 from src.optimization.optcuts.joint_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
