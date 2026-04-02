@@ -6,7 +6,7 @@ from typing import Dict, List
 import numpy as np
 import trimesh
 
-from src.atlas_state import AtlasState
+from src.atlas.atlas_state import AtlasState
 
 
 @dataclass

@@ -4,13 +4,13 @@ import threading
 from datetime import datetime
 from tkinter import messagebox
 
-from src.io_loader import PDBLoader
-from src.surface import SurfaceGenerator
-from src.topology import TopologyManager
-from src.parameterization import Parameterizer
-from src.uv_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
-from src.visualizer import InterfaceVisualizer
-from src.interaction_engine import generate_prolif_interactions
+from src.io.io_loader import PDBLoader
+from src.mesh.surface import SurfaceGenerator
+from src.mesh.topology import TopologyManager
+from src.mesh.parameterization import Parameterizer
+from src.optimization.uv_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
+from src.visualization.visualizer import InterfaceVisualizer
+from src.interactions.interaction_engine import generate_prolif_interactions
 from src.benchmark import BenchmarkConfig, BenchmarkRunner
 
 

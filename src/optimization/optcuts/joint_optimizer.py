@@ -19,7 +19,7 @@ try:
 except Exception:  # optional dependency
     meshio = None
 
-from src.metrics import UVAtlasMetrics
+from src.atlas.metrics import UVAtlasMetrics
 
 logger = logging.getLogger("UVOOptimizer")
 
