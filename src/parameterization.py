@@ -40,7 +40,7 @@ class Parameterizer:
             "failure_reason": None,
         }
         mode = (method or "auto").strip().lower()
-        if mode not in {"auto", "lscm", "harmonic"}:
+        if mode not in {"auto", "lscm", "harmonic", "spherical", "cylindrical"}:
             logger.warning(f"Unknown parameterization method '{method}', fallback to auto.")
             mode = "auto"
 
@@ -117,6 +117,18 @@ class Parameterizer:
         # libigl python bindings typically expect MatrixXi-compatible int32.
         # int64 indices can cause binding-level dtype mismatch and unstable behavior.
         f = np.ascontiguousarray(mesh.faces, dtype=np.int32)
+
+        # Projection-only methods (no boundary/topology constraint required).
+        if mode == "spherical":
+            uv_sphere = Parameterizer._flatten_spherical(v)
+            if uv_sphere is None:
+                diag["failure_reason"] = "spherical_projection_failed"
+            return (uv_sphere, diag) if return_info else uv_sphere
+        if mode == "cylindrical":
+            uv_cyl = Parameterizer._flatten_cylindrical(v)
+            if uv_cyl is None:
+                diag["failure_reason"] = "cylindrical_projection_failed"
+            return (uv_cyl, diag) if return_info else uv_cyl
 
         # Topology gate before LSCM: a valid open disk patch should satisfy
         # Euler characteristic chi = V - E + F = 1, and have exactly one boundary loop.
@@ -291,6 +303,65 @@ class Parameterizer:
             return Parameterizer._normalize_uv(uv)
         except Exception as e:
             logger.error(f"Harmonic Parameterization failed: {e}")
+            return None
+
+    @staticmethod
+    def _flatten_spherical(v):
+        """
+        Spherical parameterization via direct angular projection.
+        """
+        try:
+            pts = np.asarray(v, dtype=np.float64)
+            if len(pts) < 3:
+                return None
+            c = pts.mean(axis=0, keepdims=True)
+            d = pts - c
+            r = np.linalg.norm(d, axis=1)
+            if np.all(r < 1e-12):
+                return None
+            x, y, z = d[:, 0], d[:, 1], d[:, 2]
+            theta = np.arctan2(y, x)  # [-pi, pi]
+            rr = np.maximum(r, 1e-12)
+            phi = np.arccos(np.clip(z / rr, -1.0, 1.0))  # [0, pi]
+            uv = np.column_stack([(theta + np.pi) / (2.0 * np.pi), phi / np.pi])
+            return Parameterizer._normalize_uv(uv)
+        except Exception as e:
+            logger.error(f"Spherical Parameterization failed: {e}")
+            return None
+
+    @staticmethod
+    def _flatten_cylindrical(v):
+        """
+        Cylindrical parameterization using PCA major axis as cylinder axis.
+        """
+        try:
+            pts = np.asarray(v, dtype=np.float64)
+            if len(pts) < 3:
+                return None
+            c = pts.mean(axis=0, keepdims=True)
+            d = pts - c
+            cov = np.cov(d.T)
+            eigvals, eigvecs = np.linalg.eigh(cov)
+            axis = eigvecs[:, int(np.argmax(eigvals))]
+            axis = axis / max(np.linalg.norm(axis), 1e-12)
+
+            # Build orthonormal basis (u, w) on plane orthogonal to axis.
+            seed = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+            if abs(np.dot(seed, axis)) > 0.9:
+                seed = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+            u = np.cross(axis, seed)
+            u = u / max(np.linalg.norm(u), 1e-12)
+            w = np.cross(axis, u)
+            w = w / max(np.linalg.norm(w), 1e-12)
+
+            radial_u = d @ u
+            radial_w = d @ w
+            angle = np.arctan2(radial_w, radial_u)  # [-pi, pi]
+            h = d @ axis
+            uv = np.column_stack([(angle + np.pi) / (2.0 * np.pi), h])
+            return Parameterizer._normalize_uv(uv)
+        except Exception as e:
+            logger.error(f"Cylindrical Parameterization failed: {e}")
             return None
 
     @staticmethod

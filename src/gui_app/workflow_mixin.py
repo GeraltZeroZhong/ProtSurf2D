@@ -97,11 +97,13 @@ class WorkflowMixin:
             output = runner.run()
             summary = output.get("summary", {})
             self.log(
-                "Benchmark done. valid_structures={}, lscm_mean={:.4f}, lscm_optcuts_mean={:.4f}, harmonic_mean={:.4f}".format(
+                "Benchmark done. valid_structures={}, lscm_mean={:.4f}, lscm_optcuts_mean={:.4f}, harmonic_mean={:.4f}, spherical_mean={:.4f}, cylindrical_mean={:.4f}".format(
                     int(summary.get("valid_structure_count", 0)),
                     float(summary.get("distortion_lscm_mean", float("inf"))),
                     float(summary.get("distortion_lscm_optcuts_mean", float("inf"))),
                     float(summary.get("distortion_harmonic_mean", float("inf"))),
+                    float(summary.get("distortion_spherical_mean", float("inf"))),
+                    float(summary.get("distortion_cylindrical_mean", float("inf"))),
                 )
             )
             self.root.after(
