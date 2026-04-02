@@ -24,11 +24,11 @@ from src.benchmarking.metrics_utils import (
     rasterize_feature_maps,
 )
 from src.benchmarking.reporting import aggregate_results, write_csv
-from src.io_loader import PDBLoader
-from src.parameterization import Parameterizer
-from src.surface import SurfaceGenerator
-from src.topology import TopologyManager
-from src.uv_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
+from src.io.io_loader import PDBLoader
+from src.mesh.parameterization import Parameterizer
+from src.mesh.surface import SurfaceGenerator
+from src.mesh.topology import TopologyManager
+from src.optimization.uv_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
 
 
 class BenchmarkRunner:
