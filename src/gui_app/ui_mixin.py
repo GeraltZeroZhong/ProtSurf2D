@@ -39,7 +39,7 @@ class UIMixin:
 
         ttk.Label(param_frame, text="Cutoff (Å):").grid(row=2, column=0, sticky='w')
         self.entry_cutoff = ttk.Entry(param_frame, width=10)
-        self.entry_cutoff.insert(0, "5.0")
+        self.entry_cutoff.insert(0, "9.0")
         self.entry_cutoff.grid(row=2, column=1, pady=2)
 
         ttk.Label(param_frame, text="Grid Res (Å):").grid(row=3, column=0, sticky='w')
@@ -87,26 +87,6 @@ class UIMixin:
         ttk.Label(param_frame, text="Frame Dir (optional):").grid(row=12, column=0, sticky='w')
         self.entry_optcuts_frames_dir = ttk.Entry(param_frame, width=14)
         self.entry_optcuts_frames_dir.grid(row=12, column=1, pady=2)
-
-        self.var_auto_cutoff = tk.BooleanVar(value=False)
-        self.chk_auto_cutoff = ttk.Checkbutton(param_frame, text="Auto Search Best Cutoff", variable=self.var_auto_cutoff)
-        self.chk_auto_cutoff.grid(row=13, column=0, columnspan=2, sticky='w', pady=(4, 0))
-
-        ttk.Label(param_frame, text="Cutoff Start/End:").grid(row=14, column=0, sticky='w')
-        cutoff_range_frame = ttk.Frame(param_frame)
-        cutoff_range_frame.grid(row=14, column=1, pady=2, sticky='w')
-        self.entry_cutoff_start = ttk.Entry(cutoff_range_frame, width=4)
-        self.entry_cutoff_start.insert(0, "3.0")
-        self.entry_cutoff_start.pack(side=tk.LEFT)
-        ttk.Label(cutoff_range_frame, text="~").pack(side=tk.LEFT, padx=2)
-        self.entry_cutoff_end = ttk.Entry(cutoff_range_frame, width=4)
-        self.entry_cutoff_end.insert(0, "10.0")
-        self.entry_cutoff_end.pack(side=tk.LEFT)
-
-        ttk.Label(param_frame, text="Cutoff Step:").grid(row=15, column=0, sticky='w')
-        self.entry_cutoff_step = ttk.Entry(param_frame, width=10)
-        self.entry_cutoff_step.insert(0, "0.5")
-        self.entry_cutoff_step.grid(row=15, column=1, pady=2)
 
         style_frame = ttk.LabelFrame(self.left_frame, text="3. Visualization Style", padding=10)
         style_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -306,10 +286,6 @@ class UIMixin:
             'optcuts_frame_stride': int(self.entry_optcuts_frame_stride.get() or "1"),
             'optcuts_min_frame_long_edge': int(self.entry_optcuts_min_frame_long_edge.get() or "3200"),
             'optcuts_frames_dir': self.entry_optcuts_frames_dir.get().strip(),
-            'auto_cutoff': bool(self.var_auto_cutoff.get()),
-            'cutoff_start': float(self.entry_cutoff_start.get()),
-            'cutoff_end': float(self.entry_cutoff_end.get()),
-            'cutoff_step': float(self.entry_cutoff_step.get())
         }
         self.label_offsets = {}
         self.btn_run.config(state=tk.DISABLED)

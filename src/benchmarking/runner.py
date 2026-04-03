@@ -71,7 +71,6 @@ class BenchmarkRunner:
             "preprocessing": preprocessing_log,
             "files": all_results,
             "summary": aggregate_results(all_results),
-            "sensitivity": self._run_sensitivity(prepared_jobs),
         }
 
         with open(os.path.join(self.config.output_root, "benchmark_report.json"), "w", encoding="utf-8") as f:
@@ -370,50 +369,16 @@ class BenchmarkRunner:
             UVOptimizerConfig(
                 optcuts_bin=self.config.optcuts_bin,
                 patch_gap=self.config.patch_gap,
-                # In current OptCuts integration, testID=1 behaves as non-interactive mode.
-                # Keep benchmark default headless to avoid popping viewer windows.
-                optcuts_prog_mode=1 if self.config.optcuts_headless else 2,
+                # OptCuts README:
+                #   mode=100 => headless (no viewer window)
+                #   mode=10  => offline mode with visualization
+                optcuts_mode=100 if self.config.optcuts_headless else 10,
+                # testID (initial homotopy parameter), keep default 1 for benchmark consistency.
+                optcuts_prog_mode=1,
+                optcuts_quick_mode=bool(self.config.optcuts_quick_mode),
             )
         )
         return optimizer.optimize_patches([p.copy() for p in patches])
-
-    def _run_sensitivity(self, jobs: List[Dict[str, object]]) -> Dict[str, object]:
-        sweep = {"cutoff": self.config.cutoff_sweep, "sigma": self.config.sigma_sweep, "res": self.config.res_sweep}
-        if all(v is None for v in sweep.values()):
-            return {"enabled": False}
-        results = {"enabled": True, "items": []}
-        for name, values in sweep.items():
-            if not values:
-                continue
-            for val in values:
-                cfg = BenchmarkConfig(**{**asdict(self.config), name: float(val), "cutoff_sweep": None, "sigma_sweep": None, "res_sweep": None})
-                runner = BenchmarkRunner(cfg, log_fn=lambda *_: None)
-                subset = jobs[: min(3, len(jobs))]
-                rows = []
-                for job in subset:
-                    try:
-                        rows.append(
-                            runner._run_single(
-                                os.path.join(cfg.input_folder, str(job["pdb"])),
-                                str(job["chain_a"]),
-                                str(job["chain_b"]),
-                            )
-                        )
-                    except Exception:
-                        continue
-                valid = [r for r in rows if "error" not in r]
-                results["items"].append(
-                    {
-                        "param": name,
-                        "value": float(val),
-                        "valid_count": len(valid),
-                        "distortion_lscm_optcuts_mean": float(np.mean([r["lscm_optcuts"]["distortion"]["mean"] for r in valid])) if valid else float("inf"),
-                        "flip_lscm_optcuts_mean": float(np.mean([r["lscm_optcuts"]["flip_rate"] for r in valid])) if valid else float("inf"),
-                        "optcuts_energy_gain_mean": float(np.mean([r["topology_optimization"]["energy"]["improvement_rate"] for r in valid])) if valid else float("nan"),
-                        "atlas_nonzero_ratio_mean": float(np.mean([r["atlas_trainability"]["nonzero_ratio"] for r in valid])) if valid else float("nan"),
-                    }
-                )
-        return results
 
     def _memory_rss_mb(self) -> float:
         if self._proc is None:

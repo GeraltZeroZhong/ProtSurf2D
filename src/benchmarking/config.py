@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 
 @dataclass
@@ -14,9 +14,7 @@ class BenchmarkConfig:
     patch_gap: float = 0.08
     optcuts_bin: str = "OptCuts_bin"
     optcuts_headless: bool = True
+    optcuts_quick_mode: bool = False
     raster_size: int = 256
-    cutoff_sweep: Optional[List[float]] = None
-    sigma_sweep: Optional[List[float]] = None
-    res_sweep: Optional[List[float]] = None
     max_workers: Optional[int] = None
     show_tqdm: bool = True
