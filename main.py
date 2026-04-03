@@ -29,7 +29,7 @@ def main():
     parser.add_argument("-A", "--chain_a", required=True, help="Chain ID for the surface (Receptor)")
     parser.add_argument("-B", "--chain_b", required=True, help="Chain ID for the ligand")
     parser.add_argument("--prolif", "--arpeggio", dest="prolif", help="Path to ProLIF interaction JSON (Optional)", default=None)
-    parser.add_argument("--cutoff", type=float, default=5.0, help="Interface distance cutoff (Angstroms)")
+    parser.add_argument("--cutoff", type=float, default=9.0, help="Interface distance cutoff (Angstroms)")
     parser.add_argument("--res", type=float, default=1.0, help="Grid resolution for surface generation (Angstroms)")
     parser.add_argument("--sigma", type=float, default=1.5, help="Gaussian smoothing sigma")
     parser.add_argument("--output", "-o", default="interface_map.png", help="Output image filename")

@@ -28,10 +28,21 @@ logger = logging.getLogger("UVOOptimizer")
 class UVOptimizerConfig:
     optcuts_bin: str = "OptCuts_bin"
     patch_gap: float = 0.08
+    # OptCuts CLI positional argument: `mode`.
+    # 10 = offline optimization with visualization window / frame outputs.
+    # 100 = headless mode (no libigl viewer window).
+    optcuts_mode: int = 10
+    # OptCuts CLI positional argument: `testID` (initial homotopy parameter).
+    # NOTE: this is not a frame-export switch.
     optcuts_prog_mode: int = 1
     # OptCuts CLI positional argument (README: initialCutOption).
-    # NOTE: this is not a frame-export switch.
     optcuts_initial_cut_option: int = 0
+    # Quick mode for speed-focused runs. Keeps topology flow unchanged, but relaxes
+    # optimization parameters to reduce average runtime per patch.
+    optcuts_quick_mode: bool = False
+    optcuts_quick_distortion_bound: float = 6.0
+    optcuts_quick_lambda_init: float = 0.95
+    optcuts_quick_use_bijectivity: bool = False
     save_optcuts_frames: bool = False
     # Export every frame by default. Larger values can be used to downsample.
     optcuts_frame_stride: int = 1
@@ -62,13 +73,31 @@ class OptCutsUVOptimizer:
             uv = patch.metadata.get("uv")
             if uv is None:
                 raise RuntimeError(f"Patch {idx} is missing initial UV before OptCuts.")
+            patch_vertex_count = int(len(patch.vertices))
+            patch_face_count = int(len(patch.faces))
+
+            t0 = time.perf_counter()
             opt_uv = self._run_optcuts_for_patch(patch, uv, patch_index=idx)
+            elapsed_patch = time.perf_counter() - t0
             patch.metadata["uv_optcuts"] = opt_uv
             patch.metadata["uv"] = opt_uv
             patch.metadata["uv_global"] = opt_uv.copy()
+            patch.metadata["optcuts_runtime_sec"] = float(elapsed_patch)
+            logger.info(
+                "OptCuts patch %d done in %.3fs (verts=%d, faces=%d, quick=%s).",
+                idx,
+                elapsed_patch,
+                patch_vertex_count,
+                patch_face_count,
+                bool(self.config.optcuts_quick_mode),
+            )
 
         elapsed = time.perf_counter() - start_ts
         self.last_report = self._build_report(patches=patches, iteration_time=elapsed)
+        self.last_report["optcuts_runtime"] = {
+            "quick_mode": bool(self.config.optcuts_quick_mode),
+            "total_patch_count": int(len(patches)),
+        }
         for p in patches:
             p.metadata["joint_opt_report"] = self.last_report
         return patches
@@ -144,19 +173,28 @@ class OptCutsUVOptimizer:
                 # The bundled binary is invoked via positional parameters (see tools/OptCuts/install_optcuts.sh).
                 # Keep the output inside the temporary directory by setting cwd.
                 run_tag = "patch"
+                lambda_init = self.config.optcuts_quick_lambda_init if self.config.optcuts_quick_mode else 0.999
+                distortion_bound = self.config.optcuts_quick_distortion_bound if self.config.optcuts_quick_mode else 4.1
+                use_bijectivity = 1 if (self.config.optcuts_quick_use_bijectivity or not self.config.optcuts_quick_mode) else 0
                 cmd = [
                     resolved_bin,
-                    "10",       # mode: offline optimization with visualization outputs
+                    str(int(self.config.optcuts_mode)),  # mode
                     in_obj,      # input mesh path
-                    "0.999",    # lambda_init
+                    f"{float(lambda_init):.6g}",  # lambda_init
                     str(int(self.config.optcuts_prog_mode)),  # testID
                     "0",        # methodType
-                    "4.1",      # distortionBound
-                    "1",        # useBijectivity
+                    f"{float(distortion_bound):.6g}",  # distortionBound
+                    str(int(use_bijectivity)),  # useBijectivity
                     str(int(self.config.optcuts_initial_cut_option)),
                     run_tag,     # output tag
                 ]
-                proc = subprocess.run(cmd, capture_output=True, text=True, cwd=tmpdir)
+                proc_env = os.environ.copy()
+                if int(self.config.optcuts_mode) >= 100:
+                    # Defensive hardening for benchmark/headless runs: make sure no GUI backend
+                    # is inherited even when running inside an environment with DISPLAY set.
+                    proc_env.pop("DISPLAY", None)
+                    proc_env.pop("WAYLAND_DISPLAY", None)
+                proc = subprocess.run(cmd, capture_output=True, text=True, cwd=tmpdir, env=proc_env)
                 if proc.returncode != 0:
                     raise RuntimeError(f"OptCuts failed (code={proc.returncode}): {proc.stderr.strip()}")
 
