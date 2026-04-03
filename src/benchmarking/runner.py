@@ -49,6 +49,7 @@ class BenchmarkRunner:
         self.log = log_fn or (lambda msg: None)
         self.progress = progress_fn or (lambda *_: None)
         self._proc = psutil.Process(os.getpid()) if psutil else None
+        self._checkpoint_path = os.path.join(self.config.output_root, "benchmark_checkpoint.json")
 
     def run(self) -> Dict[str, object]:
         os.makedirs(self.config.output_root, exist_ok=True)
@@ -59,11 +60,18 @@ class BenchmarkRunner:
         prepared_jobs, preprocessing_log = self._prepare_benchmark_jobs(pdb_files)
         if not prepared_jobs:
             raise ValueError("No valid .pdb files after preprocessing: each file must contain at least two protein chains.")
+        completed_results, prepared_jobs = self._load_resume_state(prepared_jobs)
 
         worker_count = self._resolve_worker_count(len(prepared_jobs))
         self.log(f"[Benchmark] Running with {worker_count} worker thread(s).")
-        self._safe_progress(0, len(prepared_jobs), "Benchmark started")
-        all_results = self._run_files_concurrently(prepared_jobs, worker_count)
+        self._safe_progress(len(completed_results), len(completed_results) + len(prepared_jobs), "Benchmark started")
+        new_results = self._run_files_concurrently(
+            prepared_jobs,
+            worker_count,
+            completed_results=completed_results,
+            total_jobs=len(completed_results) + len(prepared_jobs),
+        )
+        all_results = completed_results + new_results
 
         output = {
             "created_at": datetime.utcnow().isoformat() + "Z",
@@ -75,18 +83,28 @@ class BenchmarkRunner:
 
         with open(os.path.join(self.config.output_root, "benchmark_report.json"), "w", encoding="utf-8") as f:
             json.dump(output, f, indent=2)
+        self._save_checkpoint(all_results)
         write_csv(all_results, self.config.output_root)
         return output
 
-    def _run_files_concurrently(self, jobs: List[Dict[str, object]], worker_count: int) -> List[Dict[str, object]]:
+    def _run_files_concurrently(
+        self,
+        jobs: List[Dict[str, object]],
+        worker_count: int,
+        completed_results: Optional[List[Dict[str, object]]] = None,
+        total_jobs: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        completed_results = completed_results or []
+        total_jobs = int(total_jobs if total_jobs is not None else len(jobs))
         all_results: List[Optional[Dict[str, object]]] = [None] * len(jobs)
-        completed = 0
+        completed = len(completed_results)
         if tqdm is not None:
             progress_ctx = tqdm(
-                total=len(jobs),
+                total=total_jobs,
                 desc="Benchmark",
                 unit="file",
                 disable=not bool(self.config.show_tqdm),
+                initial=completed,
             )
         else:
             progress_ctx = nullcontext(None)
@@ -104,12 +122,22 @@ class BenchmarkRunner:
             for future in as_completed(future_to_job):
                 out_idx, pdb_name = future_to_job[future]
                 completed += 1
-                self._safe_progress(completed, len(jobs), f"Finished {pdb_name}")
+                self._safe_progress(completed, total_jobs, f"Finished {pdb_name}")
                 if pbar is not None:
                     pbar.update(1)
                     pbar.set_postfix_str(pdb_name)
-                self.log(f"[Benchmark] Finished {pdb_name}")
-                all_results[out_idx] = future.result()
+                try:
+                    all_results[out_idx] = future.result()
+                    self.log(f"[Benchmark] Finished {pdb_name}")
+                except Exception as exc:
+                    self.log(f"[Benchmark] Failed {pdb_name}: {exc}")
+                    all_results[out_idx] = {
+                        "pdb": pdb_name,
+                        "patch_count": 0,
+                        "error": f"Benchmark file execution failed: {exc}",
+                    }
+                checkpoint_results = completed_results + [r for r in all_results if r is not None]
+                self._save_checkpoint(checkpoint_results)
 
         return [r for r in all_results if r is not None]
 
@@ -153,7 +181,7 @@ class BenchmarkRunner:
         mem_peak = max(mem_peak, self._memory_rss_mb())
 
         t0, c0 = time.perf_counter(), time.process_time()
-        lscm_optcuts = self._run_optcuts(patch_results["lscm"]["patches"])
+        lscm_optcuts, optcuts_diag = self._run_optcuts(patch_results["lscm"]["patches"])
         stage["optcuts_optimization"] = self._stage_stats(t0, c0)
         mem_peak = max(mem_peak, self._memory_rss_mb())
 
@@ -210,7 +238,7 @@ class BenchmarkRunner:
                 },
             },
             "optcuts_ablation": {
-                "enabled": True,
+                "enabled": bool(optcuts_diag.get("enabled", False)),
                 "baseline": "lscm_raw",
                 "treatment": "lscm_optcuts",
                 "distortion_mean_before": float(lscm_raw_quality["distortion"]["mean"]),
@@ -223,6 +251,7 @@ class BenchmarkRunner:
                 "seam_after": seam_opt,
                 "energy_improvement_rate": improvement_rate(energy_raw, energy_opt),
                 "seam_improvement_rate": improvement_rate(seam_raw, seam_opt),
+                "diag": optcuts_diag,
             },
             "atlas_trainability": atlas_trainability,
         }
@@ -354,6 +383,9 @@ class BenchmarkRunner:
         for p in patches:
             diag["attempted"] += 1
             patch_copy = p.copy()
+            if method == "lscm" and self._is_patch_too_small_for_lscm(patch_copy):
+                diag["failure_reasons"]["too_small_for_lscm"] = int(diag["failure_reasons"].get("too_small_for_lscm", 0)) + 1
+                continue
             t0 = time.perf_counter()
             c0 = time.process_time()
             uv, info = parameterizer.flatten_patch(patch_copy, method=method, return_info=True)
@@ -385,7 +417,7 @@ class BenchmarkRunner:
 
     def _run_optcuts(self, patches):
         if not patches:
-            return []
+            return [], {"enabled": False, "status": "skipped_no_lscm_patches", "error_count": 0, "errors": []}
         optimizer = OptCutsUVOptimizer(
             UVOptimizerConfig(
                 optcuts_bin=self.config.optcuts_bin,
@@ -399,7 +431,50 @@ class BenchmarkRunner:
                 optcuts_quick_mode=bool(self.config.optcuts_quick_mode),
             )
         )
-        return optimizer.optimize_patches([p.copy() for p in patches])
+        try:
+            optimized = optimizer.optimize_patches([p.copy() for p in patches])
+            return optimized, {"enabled": True, "status": "ok", "error_count": 0, "errors": []}
+        except Exception as exc:
+            msg = f"OptCuts error: {exc}"
+            self.log(f"[Benchmark] {msg}")
+            return [p.copy() for p in patches], {"enabled": False, "status": "failed", "error_count": 1, "errors": [msg]}
+
+    def _load_resume_state(self, jobs: List[Dict[str, object]]) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+        if not bool(self.config.resume):
+            return [], jobs
+        if not os.path.exists(self._checkpoint_path):
+            return [], jobs
+        try:
+            with open(self._checkpoint_path, "r", encoding="utf-8") as f:
+                checkpoint = json.load(f)
+            file_results = checkpoint.get("files", [])
+            if not isinstance(file_results, list):
+                return [], jobs
+            completed_names = {str(item.get("pdb")) for item in file_results if isinstance(item, dict) and item.get("pdb")}
+            remaining_jobs = [j for j in jobs if str(j["pdb"]) not in completed_names]
+            if completed_names:
+                self.log(f"[Benchmark] Resume enabled: {len(completed_names)} file(s) already completed, {len(remaining_jobs)} pending.")
+            return [r for r in file_results if isinstance(r, dict)], remaining_jobs
+        except Exception as exc:
+            self.log(f"[Benchmark] Failed to load checkpoint, running full benchmark: {exc}")
+            return [], jobs
+
+    def _save_checkpoint(self, results: List[Dict[str, object]]) -> None:
+        payload = {
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "files": results,
+        }
+        try:
+            with open(self._checkpoint_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as exc:
+            self.log(f"[Benchmark] Failed to save checkpoint: {exc}")
+
+    def _is_patch_too_small_for_lscm(self, patch) -> bool:
+        return bool(
+            len(getattr(patch, "vertices", [])) < int(self.config.min_lscm_patch_vertices)
+            or len(getattr(patch, "faces", [])) < int(self.config.min_lscm_patch_faces)
+        )
 
     def _memory_rss_mb(self) -> float:
         if self._proc is None:

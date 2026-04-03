@@ -79,8 +79,7 @@ class WorkflowMixin:
 
     def run_benchmark_pipeline(self, params):
         try:
-            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            output_root = os.path.join(params["folder"], f"benchmark_results_{ts}")
+            output_root = os.path.join(params["folder"], "benchmark_results_resume")
             config = BenchmarkConfig(
                 input_folder=params["folder"],
                 output_root=output_root,
@@ -93,6 +92,7 @@ class WorkflowMixin:
                 optcuts_bin=params["optcuts_bin"],
                 optcuts_headless=True,
                 show_tqdm=False,
+                resume=True,
             )
             runner = BenchmarkRunner(config=config, log_fn=self.log, progress_fn=self._on_benchmark_progress)
             self.log("Benchmark OptCuts runs in headless mode (viewer disabled).")

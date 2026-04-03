@@ -18,3 +18,6 @@ class BenchmarkConfig:
     raster_size: int = 256
     max_workers: Optional[int] = None
     show_tqdm: bool = True
+    resume: bool = True
+    min_lscm_patch_vertices: int = 10
+    min_lscm_patch_faces: int = 8
