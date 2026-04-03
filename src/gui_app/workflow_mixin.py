@@ -72,7 +72,8 @@ class WorkflowMixin:
         }
         self.btn_run.config(state="disabled")
         self.btn_bench.config(state="disabled")
-        self.progress.start(10)
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100, value=0)
         self.log("Starting benchmark pipeline...")
         threading.Thread(target=self.run_benchmark_pipeline, args=(params,), daemon=True).start()
 
@@ -91,10 +92,12 @@ class WorkflowMixin:
                 patch_gap=params["patch_gap"],
                 optcuts_bin=params["optcuts_bin"],
                 optcuts_headless=True,
+                show_tqdm=False,
             )
-            runner = BenchmarkRunner(config=config, log_fn=self.log)
+            runner = BenchmarkRunner(config=config, log_fn=self.log, progress_fn=self._on_benchmark_progress)
             self.log("Benchmark OptCuts runs in headless mode (viewer disabled).")
             output = runner.run()
+            self.root.after(0, lambda: self.progress.configure(value=100))
             summary = output.get("summary", {})
             self.log(
                 "Benchmark done. valid_structures={}, lscm_mean={:.4f}, lscm_optcuts_mean={:.4f}, harmonic_mean={:.4f}, spherical_mean={:.4f}, cylindrical_mean={:.4f}".format(
@@ -117,6 +120,16 @@ class WorkflowMixin:
             self.root.after(0, lambda: self.finish_success())
         except Exception as e:
             self.root.after(0, lambda msg=str(e): self.show_error(f"Benchmark failed: {msg}"))
+
+    def _on_benchmark_progress(self, completed: int, total: int, message: str):
+        self.root.after(0, lambda: self._set_benchmark_progress_ui(completed, total, message))
+
+    def _set_benchmark_progress_ui(self, completed: int, total: int, message: str):
+        total_safe = max(1, int(total))
+        completed_safe = max(0, min(int(completed), total_safe))
+        percent = int((completed_safe / total_safe) * 100.0)
+        self.progress.configure(mode="determinate", maximum=100, value=percent)
+        self.log(f"[Benchmark][Progress] {completed_safe}/{total_safe} ({percent}%) - {message}")
 
     def generate_prolif_interactions(self, pdb_path, chain_a, chain_b):
         self.log("Checking ProLIF requirements...")

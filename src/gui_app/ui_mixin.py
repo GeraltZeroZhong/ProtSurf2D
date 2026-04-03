@@ -316,6 +316,7 @@ class UIMixin:
         self.btn_bench.config(state=tk.DISABLED)
         self.btn_redraw.config(state=tk.DISABLED)
         self.btn_save.config(state=tk.DISABLED)
+        self.progress.configure(mode='indeterminate')
         self.progress.start(10)
         self.log("Starting analysis pipeline...")
         threading.Thread(target=self.run_pipeline, args=(params,), daemon=True).start()

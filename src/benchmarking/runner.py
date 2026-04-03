@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
+try:
+    from tqdm.auto import tqdm
+except Exception:  # optional dependency
+    tqdm = None
 
 try:
     import psutil
@@ -33,9 +39,15 @@ from src.optimization.uv_optimizer import OptCutsUVOptimizer, UVOptimizerConfig
 
 
 class BenchmarkRunner:
-    def __init__(self, config: BenchmarkConfig, log_fn: Optional[Callable[[str], None]] = None):
+    def __init__(
+        self,
+        config: BenchmarkConfig,
+        log_fn: Optional[Callable[[str], None]] = None,
+        progress_fn: Optional[Callable[[int, int, str], None]] = None,
+    ):
         self.config = config
         self.log = log_fn or (lambda msg: None)
+        self.progress = progress_fn or (lambda *_: None)
         self._proc = psutil.Process(os.getpid()) if psutil else None
 
     def run(self) -> Dict[str, object]:
@@ -50,6 +62,7 @@ class BenchmarkRunner:
 
         worker_count = self._resolve_worker_count(len(prepared_jobs))
         self.log(f"[Benchmark] Running with {worker_count} worker thread(s).")
+        self._safe_progress(0, len(prepared_jobs), "Benchmark started")
         all_results = self._run_files_concurrently(prepared_jobs, worker_count)
 
         output = {
@@ -68,7 +81,17 @@ class BenchmarkRunner:
 
     def _run_files_concurrently(self, jobs: List[Dict[str, object]], worker_count: int) -> List[Dict[str, object]]:
         all_results: List[Optional[Dict[str, object]]] = [None] * len(jobs)
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        completed = 0
+        if tqdm is not None:
+            progress_ctx = tqdm(
+                total=len(jobs),
+                desc="Benchmark",
+                unit="file",
+                disable=not bool(self.config.show_tqdm),
+            )
+        else:
+            progress_ctx = nullcontext(None)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor, progress_ctx as pbar:
             future_to_job = {}
             for idx, job in enumerate(jobs, start=1):
                 pdb_name = str(job["pdb"])
@@ -81,6 +104,11 @@ class BenchmarkRunner:
 
             for future in as_completed(future_to_job):
                 out_idx, pdb_name = future_to_job[future]
+                completed += 1
+                self._safe_progress(completed, len(jobs), f"Finished {pdb_name}")
+                if pbar is not None:
+                    pbar.update(1)
+                    pbar.set_postfix_str(pdb_name)
                 self.log(f"[Benchmark] Finished {pdb_name}")
                 all_results[out_idx] = future.result()
 
@@ -93,6 +121,7 @@ class BenchmarkRunner:
         return max(1, min(int(configured_workers), int(file_count)))
 
     def _run_single(self, pdb_path: str, chain_a: str, chain_b: str) -> Dict[str, object]:
+        self._log_thread(f"Start processing {os.path.basename(pdb_path)} ({chain_a}/{chain_b})")
         mem_peak = self._memory_rss_mb()
 
         stage = {}
@@ -117,6 +146,7 @@ class BenchmarkRunner:
             }
 
         patch_results = {}
+        self._log_thread("Patch parameterization runs sequentially per file; file-level parallelism is handled by worker threads.")
         for method in ("lscm", "harmonic", "spherical", "cylindrical"):
             p, wt, ct, diag = self._parameterize_patches(patches, method=method)
             patch_results[method] = {"patches": p, "wall": wt, "cpu": ct, "diag": diag}
@@ -197,7 +227,19 @@ class BenchmarkRunner:
             },
             "atlas_trainability": atlas_trainability,
         }
+        self._log_thread(f"Finished processing {os.path.basename(pdb_path)}")
         return result
+
+    def _log_thread(self, message: str) -> None:
+        tid = threading.get_ident()
+        tname = threading.current_thread().name
+        self.log(f"[Benchmark][Thread {tname}:{tid}] {message}")
+
+    def _safe_progress(self, completed: int, total: int, message: str) -> None:
+        try:
+            self.progress(int(completed), int(total), str(message))
+        except Exception:
+            pass
 
     def _prepare_benchmark_jobs(self, pdb_files: List[str]) -> Tuple[List[Dict[str, object]], Dict[str, object]]:
         accepted_jobs: List[Dict[str, object]] = []
@@ -328,7 +370,9 @@ class BenchmarkRunner:
             UVOptimizerConfig(
                 optcuts_bin=self.config.optcuts_bin,
                 patch_gap=self.config.patch_gap,
-                optcuts_prog_mode=2 if self.config.optcuts_headless else 1,
+                # In current OptCuts integration, testID=1 behaves as non-interactive mode.
+                # Keep benchmark default headless to avoid popping viewer windows.
+                optcuts_prog_mode=1 if self.config.optcuts_headless else 2,
             )
         )
         return optimizer.optimize_patches([p.copy() for p in patches])
