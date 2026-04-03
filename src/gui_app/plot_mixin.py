@@ -12,8 +12,13 @@ class PlotMixin:
         self.update_plot(self.cached_viz, self.cached_patches, style)
 
     def finish_success(self):
-        style = self.get_style_config()
-        self.update_plot(self.cached_viz, self.cached_patches, style)
+        if self.cached_viz is not None and self.cached_patches is not None:
+            style = self.get_style_config()
+            self.update_plot(self.cached_viz, self.cached_patches, style)
+        else:
+            self.progress.stop()
+            self.btn_run.config(state=tk.NORMAL)
+            self.btn_bench.config(state=tk.NORMAL)
         self.btn_redraw.config(state=tk.NORMAL)
         self.btn_save.config(state=tk.NORMAL)
 
