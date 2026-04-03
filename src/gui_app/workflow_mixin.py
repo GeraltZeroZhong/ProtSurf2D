@@ -190,18 +190,10 @@ class WorkflowMixin:
                 prolif_file=prolif_file
             )
 
-            cutoff_value = params['cutoff']
-            if params.get('auto_cutoff', False):
-                cutoff_value = self._search_best_cutoff(
-                    mesh_A, coords_B, param, viz,
-                    params['cutoff_start'], params['cutoff_end'], params['cutoff_step'], params['min_points']
-                )
-                self.log(f"Auto-selected cutoff = {cutoff_value:.2f} Å")
-
             topo = TopologyManager(mesh_A, coords_B)
-            patches = topo.get_interface_patches(distance_cutoff=cutoff_value)
+            patches = topo.get_interface_patches(distance_cutoff=params['cutoff'])
             if not patches:
-                raise ValueError(f"No interface found with cutoff {cutoff_value:.2f}.")
+                raise ValueError(f"No interface found with cutoff {params['cutoff']:.2f}.")
 
             self.log(f"Flattening {len(patches)} patches...")
             parameterized_patches = self._parameterize_patches(patches, param)
@@ -296,41 +288,3 @@ class WorkflowMixin:
             else:
                 invalid += 1
         return valid, len(valid), invalid
-
-    def _generate_cutoff_values(self, start, end, step):
-        if step <= 0:
-            raise ValueError("Cutoff step must be > 0.")
-        if end < start:
-            raise ValueError("Cutoff end must be >= cutoff start.")
-        values = []
-        cur = start
-        while cur <= end + 1e-8:
-            values.append(round(cur, 6))
-            cur += step
-        return values
-
-    def _search_best_cutoff(self, mesh_A, coords_B, parameterizer, viz, start, end, step, min_points):
-        candidates = self._generate_cutoff_values(start, end, step)
-        best = None
-        for cutoff in candidates:
-            topo = TopologyManager(mesh_A, coords_B)
-            patches = topo.get_interface_patches(distance_cutoff=cutoff)
-            if not patches:
-                self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: no interfaces")
-                continue
-            parameterized = self._parameterize_patches(patches, parameterizer)
-            if not parameterized:
-                self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: parameterization failed")
-                continue
-            valid_patches, valid_count, invalid_count = self._split_interfaces_by_point_count(parameterized, viz, min_points)
-            valid_points = sum(p.metadata.get('point_count', 0) for p in valid_patches)
-            self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: valid={valid_count}, invalid={invalid_count}, valid_points={valid_points}")
-            if valid_count == 0:
-                continue
-            if best is None or valid_count < best['valid_count'] or (valid_count == best['valid_count'] and valid_points > best['valid_points']):
-                best = {'cutoff': cutoff, 'valid_count': valid_count, 'valid_points': valid_points}
-
-        if best is None:
-            raise ValueError("Cutoff search failed: no candidate produced valid interfaces. Please adjust range/step/min-points.")
-        self.log(f"[Cutoff Search] selected cutoff={best['cutoff']:.2f} (valid={best['valid_count']}, valid_points={best['valid_points']})")
-        return best['cutoff']
