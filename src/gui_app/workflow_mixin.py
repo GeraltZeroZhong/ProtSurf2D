@@ -193,7 +193,7 @@ class WorkflowMixin:
             cutoff_value = params['cutoff']
             if params.get('auto_cutoff', False):
                 cutoff_value = self._search_best_cutoff(
-                    mesh_A, coords_B, param, optimizer, viz,
+                    mesh_A, coords_B, param, viz,
                     params['cutoff_start'], params['cutoff_end'], params['cutoff_step'], params['min_points']
                 )
                 self.log(f"Auto-selected cutoff = {cutoff_value:.2f} Å")
@@ -204,21 +204,28 @@ class WorkflowMixin:
                 raise ValueError(f"No interface found with cutoff {cutoff_value:.2f}.")
 
             self.log(f"Flattening {len(patches)} patches...")
-            valid_patches = self._parameterize_and_optimize_patches(patches, param, optimizer)
-            if not valid_patches:
+            parameterized_patches = self._parameterize_patches(patches, param)
+            if not parameterized_patches:
                 raise ValueError("LSCM Parameterization failed for all patches.")
 
-            display_patches, valid_count, invalid_count = self._split_interfaces_by_point_count(valid_patches, viz, params['min_points'])
+            valid_patches, valid_count, invalid_count = self._split_interfaces_by_point_count(
+                parameterized_patches,
+                viz,
+                params['min_points'],
+            )
             self.log(f"Interface count summary (min points = {params['min_points']}): valid={valid_count}, invalid={invalid_count}")
+            if not valid_patches:
+                raise ValueError(f"All interfaces are invalid (point count < {params['min_points']}).")
+
+            self.log(f"Running OptCuts only on valid interfaces ({len(valid_patches)} patches)...")
+            optimized_valid_patches = self._optimize_patches(valid_patches, optimizer)
 
             if params.get('filter_valid_only', True):
-                selected_patches = display_patches
-                if not selected_patches:
-                    raise ValueError(f"All interfaces are invalid (point count < {params['min_points']}).")
+                selected_patches = optimized_valid_patches
                 self.log("Display mode: valid interfaces only.")
             else:
-                selected_patches = valid_patches
-                self.log("Display mode: all interfaces (including invalid).")
+                selected_patches = optimized_valid_patches
+                self.log("Display mode: all interfaces request ignored because invalid interfaces are now excluded before OptCuts.")
 
             self.log("Rendering visualization...")
             self.cached_viz = viz
@@ -228,16 +235,19 @@ class WorkflowMixin:
             error_message = str(e)
             self.root.after(0, lambda msg=error_message: self.show_error(msg))
 
-    def _parameterize_and_optimize_patches(self, patches, parameterizer, optimizer):
+    def _parameterize_patches(self, patches, parameterizer):
         valid_patches = []
         for p in patches:
             uv = parameterizer.flatten_patch(p)
             if uv is not None:
                 p.metadata['uv'] = uv
                 valid_patches.append(p)
-        if not valid_patches:
+        return valid_patches
+
+    def _optimize_patches(self, patches, optimizer):
+        if not patches:
             return []
-        result = optimizer.optimize_patches(valid_patches)
+        result = optimizer.optimize_patches(patches)
         self._log_joint_report(optimizer)
         return result
 
@@ -299,7 +309,7 @@ class WorkflowMixin:
             cur += step
         return values
 
-    def _search_best_cutoff(self, mesh_A, coords_B, parameterizer, optimizer, viz, start, end, step, min_points):
+    def _search_best_cutoff(self, mesh_A, coords_B, parameterizer, viz, start, end, step, min_points):
         candidates = self._generate_cutoff_values(start, end, step)
         best = None
         for cutoff in candidates:
@@ -308,11 +318,11 @@ class WorkflowMixin:
             if not patches:
                 self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: no interfaces")
                 continue
-            processed = self._parameterize_and_optimize_patches(patches, parameterizer, optimizer)
-            if not processed:
+            parameterized = self._parameterize_patches(patches, parameterizer)
+            if not parameterized:
                 self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: parameterization failed")
                 continue
-            valid_patches, valid_count, invalid_count = self._split_interfaces_by_point_count(processed, viz, min_points)
+            valid_patches, valid_count, invalid_count = self._split_interfaces_by_point_count(parameterized, viz, min_points)
             valid_points = sum(p.metadata.get('point_count', 0) for p in valid_patches)
             self.log(f"[Cutoff Search] cutoff={cutoff:.2f}: valid={valid_count}, invalid={invalid_count}, valid_points={valid_points}")
             if valid_count == 0:
