@@ -19,3 +19,4 @@ class BenchmarkConfig:
     sigma_sweep: Optional[List[float]] = None
     res_sweep: Optional[List[float]] = None
     max_workers: Optional[int] = None
+    show_tqdm: bool = True
