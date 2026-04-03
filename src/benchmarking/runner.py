@@ -241,6 +241,7 @@ class BenchmarkRunner:
             pass
 
     def _prepare_benchmark_jobs(self, pdb_files: List[str]) -> Tuple[List[Dict[str, object]], Dict[str, object]]:
+        min_chain_residues = 11
         accepted_jobs: List[Dict[str, object]] = []
         skipped_files: List[Dict[str, str]] = []
 
@@ -281,6 +282,25 @@ class BenchmarkRunner:
                         f"{chain_a}({len(coords_a)}), {chain_b}({len(coords_b)})"
                     )
                     continue
+
+                residue_count_a = loader.get_chain_residue_count(chain_a)
+                residue_count_b = loader.get_chain_residue_count(chain_b)
+                if residue_count_a < min_chain_residues or residue_count_b < min_chain_residues:
+                    skipped_files.append(
+                        {
+                            "pdb": pdb_name,
+                            "reason": (
+                                "Selected chain length too short: "
+                                f"{chain_a}({residue_count_a}), {chain_b}({residue_count_b}); "
+                                "each chain must be >10 amino acids"
+                            ),
+                        }
+                    )
+                    self.log(
+                        f"[Benchmark][Preprocess] Skipped {pdb_name}: selected chains too short "
+                        f"{chain_a}({residue_count_a}), {chain_b}({residue_count_b}); each must be >10 aa"
+                    )
+                    continue
             except Exception as exc:
                 skipped_files.append({"pdb": pdb_name, "reason": f"Selected chain extraction failed: {exc}"})
                 self.log(f"[Benchmark][Preprocess] Skipped {pdb_name}: selected chain extraction failed ({exc})")
@@ -308,6 +328,7 @@ class BenchmarkRunner:
             "skipped": skipped_files,
             "rules": [
                 "File must contain at least two protein chains.",
+                "Selected chains must each have >10 amino acids.",
                 "If both A and B chains exist, use A/B.",
                 "Otherwise use the first two protein chains discovered in structure order.",
             ],

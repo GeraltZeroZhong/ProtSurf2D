@@ -64,6 +64,15 @@ class PDBLoader:
                 chain_ids.append(chain.id)
         return chain_ids
 
+    def get_chain_residue_count(self, chain_id):
+        """
+        Return the number of standard residues in a chain.
+        """
+        if chain_id not in self.model:
+            raise ValueError(f"Chain {chain_id} not found in PDB.")
+        chain = self.model[chain_id]
+        return sum(1 for residue in chain if residue.id[0] == " ")
+
 # --- Unit Test ---
 if __name__ == "__main__":
     print("This module is a helper for loading PDB files.")
