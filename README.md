@@ -81,7 +81,7 @@ Main dependencies include:
 
 ## Usage
 
-### 1) GUI mode (recommended for beginners)
+### 1) GUI mode
 
 Launch the desktop app:
 
