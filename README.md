@@ -1,6 +1,6 @@
 # TopoPPI
 
-TopoPPI is a beginner-friendly Python toolkit for mapping **protein–protein interaction (PPI) interfaces** from 3D structures into 2D UV atlases.
+TopoPPI is a user-friendly Python toolkit for mapping **protein–protein interaction (PPI) interfaces** from 3D structures into 2D UV atlases.
 If you prefer an interactive workflow, you can start directly with the desktop GUI via [`gui.py`](./gui.py).
 
 The project provides:
