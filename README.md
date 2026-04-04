@@ -14,6 +14,39 @@ The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surfac
 
 ---
 
+## Quick Start (GUI, ~5 minutes)
+
+If you only want to launch the GUI and run your first structure quickly:
+
+1. Create and activate the Conda environment:
+
+```bash
+conda env create -f environment.yml
+conda activate bio3d
+```
+
+2. Install bundled OptCuts into the active Conda environment:
+
+```bash
+bash tools/OptCuts/install_optcuts.sh
+which OptCuts_bin
+```
+
+3. Launch GUI:
+
+```bash
+python gui.py
+```
+
+4. In the GUI:
+   - Load a `.pdb`/`.cif` structure file,
+   - Set Chain A (receptor) and Chain B (ligand),
+   - Click **Run** to generate the interface map.
+
+> Note: OptCuts is required by the current pipeline. Running without OptCuts is intentionally unsupported.
+
+---
+
 ## Project Overview
 
 ### Core workflow
@@ -119,6 +152,19 @@ Outputs are written under:
 - `benchmark_report.json`
 - `benchmark_summary.csv`
 - `benchmark_checkpoint.json` (resume support)
+
+### 4) Output artifacts (what gets written)
+
+#### Single-run CLI / GUI outputs
+
+- Main rendered interface image (default: `interface_map.png`, or your `-o/--output` value)
+- Auto-generated ProLIF JSON when `--prolif` is not provided (saved as `<input_basename>.prolif.json` beside the input file)
+
+#### Benchmark outputs
+
+- `benchmark_report.json`: full structured report
+- `benchmark_summary.csv`: tabular summary for all processed structures
+- `benchmark_checkpoint.json`: resume/checkpoint state
 
 ---
 
@@ -230,6 +276,65 @@ TopoPPI/
    ├─ gui_app/                    # GUI mixins and application orchestration
    └─ benchmarking/               # Benchmark runner, metrics, reporting
 ```
+
+---
+
+## Troubleshooting
+
+### `OptCuts_bin` not found
+
+Symptoms:
+- CLI/GUI fails when entering optimization stage
+- `which OptCuts_bin` returns empty
+
+Fix:
+
+```bash
+bash tools/OptCuts/install_optcuts.sh
+which OptCuts_bin
+```
+
+If still missing, pass an explicit binary path:
+
+```bash
+python main.py <input.pdb|input.cif> -A <chainA> -B <chainB> --optcuts-bin /absolute/path/to/OptCuts_bin
+```
+
+### GUI cannot start (Tk / display issues)
+
+Symptoms:
+- Errors related to `tkinter`, display server, or missing Tk libraries
+
+Fix:
+- Ensure your Python environment includes Tk support
+- On headless servers, prefer CLI mode:
+
+```bash
+python main.py <input.pdb|input.cif> -A <chainA> -B <chainB> -o interface_map.png
+```
+
+### ProLIF/MDAnalysis import errors
+
+Symptoms:
+- Import errors for `prolif` or `MDAnalysis`
+
+Fix:
+- Recreate environment from `environment.yml`
+- Confirm packages are installed in the active env
+
+```bash
+conda env create -f environment.yml
+conda activate bio3d
+python -c "import MDAnalysis, prolif; print('ok')"
+```
+
+### `igl` / libigl compatibility issues
+
+Symptoms:
+- Import failures or runtime issues in geometry/parameterization stages
+
+Fix:
+- Use the project environment and keep `igl` in the documented `2.6.x` range.
 
 ---
 
