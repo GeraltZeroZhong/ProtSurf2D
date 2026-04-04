@@ -1,6 +1,6 @@
 # TopoPPI
 
-TopoPPI is a user-friendly Python toolkit for mapping **protein–protein interaction (PPI) interfaces** from 3D structures into 2D UV atlases.
+TopoPPI is a user-friendly Python toolkit for mapping **protein–protein interaction (PPI) interfaces** from 3D structures into 2D UV atlases. See the [Quick Start](#quick-start-gui-5-minutes) to get running in minutes.
 
 The project provides:
 
@@ -8,7 +8,7 @@ The project provides:
 - a **Tkinter GUI** for interactive analysis and visualization (a screenshot of the GUI is shown below),
 - and a **benchmark framework** for multi-structure evaluation and reproducible reporting.
 
-The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a ligand chain, flattens patches to UV space, optimizes UVs with **OptCuts**, and renders annotated interface maps (using ProLIF interactions).
+The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a ligand chain, flattens patches to UV space, optimizes UVs with [**OptCuts**](https://github.com/liminchen/OptCuts), and renders annotated interface maps (using ProLIF interactions).
 
 <img width="1920" height="1007" alt="GUI" src="https://github.com/user-attachments/assets/cbf18521-63be-4b93-886e-526564744b1d" />
 
@@ -43,7 +43,7 @@ python gui.py
    - Set Chain A (receptor) and Chain B (ligand),
    - Click **Run** to generate the interface map.
 
-> Note: OptCuts is required by the current pipeline. Running without OptCuts is intentionally unsupported.
+> Note: [OptCuts](https://github.com/liminchen/OptCuts) is required by the current pipeline. Running without OptCuts is intentionally unsupported.
 
 ---
 
@@ -83,7 +83,7 @@ conda env create -f environment.yml
 conda activate bio3d
 ```
 
-### Install bundled OptCuts binary
+### Install bundled [OptCuts](https://github.com/liminchen/OptCuts) binary
 
 The repository includes a helper script that installs `tools/OptCuts/OptCuts_bin` into your active Conda environment:
 
@@ -97,7 +97,7 @@ After installation, verify:
 which OptCuts_bin
 ```
 
-> Required: the current pipeline does **not** support running without OptCuts.
+> Required: the current pipeline does **not** support running without [OptCuts](https://github.com/liminchen/OptCuts).
 
 ### Python dependencies
 
