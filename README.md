@@ -1,7 +1,9 @@
 # TopoPPI
 
-TopoPPI is a Python toolkit for mapping **protein–protein interaction (PPI) interfaces** from 3D structures into 2D UV atlases.
-It provides:
+TopoPPI is a beginner-friendly Python toolkit for mapping **protein–protein interaction (PPI) interfaces** from 3D structures into 2D UV atlases.
+If you prefer an interactive workflow, you can start directly with the desktop GUI via [`gui.py`](./gui.py).
+
+The project provides:
 
 - a **command-line pipeline** for one-shot interface map generation,
 - a **Tkinter GUI** for interactive analysis and visualization,
@@ -72,21 +74,7 @@ See `environment.yml` for the authoritative list. Main dependencies include:
 
 ## Usage
 
-### 1) Command-line mode
-
-Run the full pipeline on a single PDB/mmCIF structure:
-
-```bash
-python main.py <input.pdb|input.cif> -A <chainA> -B <chainB> [options]
-```
-
-Example:
-
-```bash
-python main.py ./data/1abc.pdb -A A -B B -o interface_map.png --cutoff 9.0 --res 1.0 --sigma 1.5
-```
-
-### 2) GUI mode
+### 1) GUI mode (recommended for beginners)
 
 Launch the desktop app:
 
@@ -100,6 +88,20 @@ GUI supports:
 - folder-level benchmark runs,
 - interaction-type filtering and styling,
 - optional OptCuts frame export.
+
+### 2) Command-line mode
+
+Run the full pipeline on a single PDB/mmCIF structure:
+
+```bash
+python main.py <input.pdb|input.cif> -A <chainA> -B <chainB> [options]
+```
+
+Example:
+
+```bash
+python main.py ./data/1abc.pdb -A A -B B -o interface_map.png --cutoff 9.0 --res 1.0 --sigma 1.5
+```
 
 ### 3) Benchmark mode (via GUI workflow)
 
