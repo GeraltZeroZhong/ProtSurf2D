@@ -44,7 +44,7 @@ class UIMixin:
 
         ttk.Label(param_frame, text="Grid Res (Å):").grid(row=3, column=0, sticky='w')
         self.entry_res = ttk.Entry(param_frame, width=10)
-        self.entry_res.insert(0, "1.0")
+        self.entry_res.insert(0, "2.0")
         self.entry_res.grid(row=3, column=1, pady=2)
 
         ttk.Label(param_frame, text="Sigma:").grid(row=4, column=0, sticky='w')
