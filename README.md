@@ -38,7 +38,8 @@ The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surfac
 
 - Python **3.10** (recommended via Conda)
 - OS with Tk support (for GUI mode)
-- OptCuts binary (`OptCuts_bin`) available in your PATH or passed via `--optcuts-bin`
+- **ProLIF + MDAnalysis must be installed** (interaction parsing/annotation)
+- **OptCuts binary (`OptCuts_bin`) must be installed** and available in your PATH (or passed via `--optcuts-bin`)
 
 ### Create environment
 
@@ -61,9 +62,14 @@ After installation, verify:
 which OptCuts_bin
 ```
 
+> Required: the current pipeline does **not** support running without OptCuts.
+
 ### Python dependencies
 
-See `environment.yml` for the authoritative list. Main dependencies include:
+See `environment.yml` for the authoritative list.  
+In particular, `prolif` and `MDAnalysis` are required dependencies for this project.
+
+Main dependencies include:
 
 - `numpy`, `scipy`, `matplotlib`
 - `biopython`, `scikit-image`, `trimesh`, `igl`
@@ -146,7 +152,7 @@ Outputs are written under:
 
 ### ProLIF behavior
 
-If `--prolif` is not provided (or file is missing), the pipeline attempts to auto-generate `<input_basename>.prolif.json` using MDAnalysis + ProLIF. If unavailable, visualization falls back to geometric heuristics.
+If `--prolif` is not provided (or file is missing), the pipeline auto-generates `<input_basename>.prolif.json` using MDAnalysis + ProLIF.
 
 ---
 
