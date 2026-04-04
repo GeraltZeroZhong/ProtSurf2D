@@ -5,10 +5,11 @@ TopoPPI is a user-friendly Python toolkit for mapping **protein–protein intera
 The project provides:
 
 - a **command-line pipeline** for one-shot interface map generation,
-- a **Tkinter GUI** for interactive analysis and visualization,
+- a **Tkinter GUI** for interactive analysis and visualization (a screenshot of the GUI is shown below),
 - and a **benchmark framework** for multi-structure evaluation and reproducible reporting.
 
-The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a ligand chain, flattens patches to UV space, optimizes UVs with **OptCuts**, and renders annotated interface maps (optionally using ProLIF interactions).
+The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a ligand chain, flattens patches to UV space, optimizes UVs with **OptCuts**, and renders annotated interface maps (using ProLIF interactions).
+
 <img width="1920" height="1007" alt="GUI" src="https://github.com/user-attachments/assets/cbf18521-63be-4b93-886e-526564744b1d" />
 
 ---
