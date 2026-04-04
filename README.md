@@ -300,19 +300,6 @@ If still missing, pass an explicit binary path:
 python main.py <input.pdb|input.cif> -A <chainA> -B <chainB> --optcuts-bin /absolute/path/to/OptCuts_bin
 ```
 
-### GUI cannot start (Tk / display issues)
-
-Symptoms:
-- Errors related to `tkinter`, display server, or missing Tk libraries
-
-Fix:
-- Ensure your Python environment includes Tk support
-- On headless servers, prefer CLI mode:
-
-```bash
-python main.py <input.pdb|input.cif> -A <chainA> -B <chainB> -o interface_map.png
-```
-
 ### ProLIF/MDAnalysis import errors
 
 Symptoms:
