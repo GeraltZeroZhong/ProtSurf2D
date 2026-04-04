@@ -38,6 +38,7 @@ The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surfac
 
 - Python **3.10** (recommended via Conda)
 - OS with Tk support (for GUI mode)
+- **libigl Python bindings 2.6.x** (package: `igl`)
 - **ProLIF + MDAnalysis must be installed** (interaction parsing/annotation)
 - **OptCuts binary (`OptCuts_bin`) must be installed** and available in your PATH (or passed via `--optcuts-bin`)
 
@@ -72,7 +73,7 @@ In particular, `prolif` and `MDAnalysis` are required dependencies for this proj
 Main dependencies include:
 
 - `numpy`, `scipy`, `matplotlib`
-- `biopython`, `scikit-image`, `trimesh`, `igl`
+- `biopython`, `scikit-image`, `trimesh`, `igl` (**2.6.x**)
 - `networkx`, `rtree`, `shapely`, `pillow`
 - `openbabel`, `MDAnalysis`, `prolif`
 

@@ -10,7 +10,7 @@ dependencies:
   - scikit-image
   - matplotlib
   - tk                    
-  - igl                   
+  - igl=2.6.*
   - trimesh                
   - networkx            
   - pillow          
