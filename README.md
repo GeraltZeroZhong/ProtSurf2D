@@ -177,8 +177,8 @@ Outputs are written under:
 - `-B, --chain_b`: ligand chain ID (required)
 - `--prolif`: optional ProLIF JSON path
 - `--cutoff` (default `9.0`): interface distance cutoff (Å)
-- `--res` (default `1.0`): surface grid resolution (Å)
-- `--sigma` (default `1.5`): Gaussian smoothing sigma
+- `--res` (default `2.0`): surface grid resolution (Å)
+- `--sigma` (default `1.0`): Gaussian smoothing sigma
 - `-o, --output` (default `interface_map.png`): output image path
 - `--optcuts-bin` (default `OptCuts_bin`): OptCuts executable path/name
 - `--patch-gap` (default `0.08`): minimum spacing between charts in global UV atlas
