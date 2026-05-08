@@ -38,6 +38,9 @@ tmp/
 temp/
 *.tmp
 
+# Local visual inspection artifacts
+docs/assets/
+
 # TopoPPI generated outputs
 interface_map.png
 *_interface.png

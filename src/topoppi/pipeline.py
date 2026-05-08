@@ -49,7 +49,7 @@ def run_interface_mapping(config: TopoPPIRunConfig, log: Optional[logging.Logger
     coords_a, atoms_a, coords_b, atoms_b = _load_chain_data(config, log)
     mesh_a = _generate_surface(coords_a, config, log)
     patches = _extract_patches(mesh_a, coords_b, config, log)
-    valid_patches = _parameterize_patches(patches, log)
+    valid_patches = _parameterize_patches(patches, config, log)
     optimizer_report = _optimize_patches(valid_patches, config, log)
     _render_output(valid_patches, atoms_a, coords_a, atoms_b, coords_b, prolif_file, config, log)
 
@@ -106,7 +106,7 @@ def _extract_patches(mesh_a: trimesh.Trimesh, coords_b, config: TopoPPIRunConfig
     return list(patches)
 
 
-def _parameterize_patches(patches: List[trimesh.Trimesh], log: logging.Logger) -> List[trimesh.Trimesh]:
+def _parameterize_patches(patches: List[trimesh.Trimesh], config: TopoPPIRunConfig, log: logging.Logger) -> List[trimesh.Trimesh]:
     log.info("Parameterizing %d patches...", len(patches))
     valid_patches = []
     parameterizer = Parameterizer(config=config.parameterization)

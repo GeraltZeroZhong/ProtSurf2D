@@ -15,7 +15,7 @@ from topoppi.pipeline import run_interface_mapping
 
 def build_parser() -> argparse.ArgumentParser:
     defaults = DEFAULT_RUN_CONFIG
-    parser = argparse.ArgumentParser(description="TopoPPI: protein interface 2D map generator")
+    parser = argparse.ArgumentParser(prog="topoppi", description="TopoPPI: protein interface 2D map generator")
     parser.add_argument("pdb_file", help="Path to input PDB/mmCIF file")
     parser.add_argument("-A", "--chain-a", "--chain_a", dest="chain_a", default=defaults.chain_a, help="Chain ID for the receptor/surface chain")
     parser.add_argument("-B", "--chain-b", "--chain_b", dest="chain_b", default=defaults.chain_b, help="Chain ID for the ligand chain")

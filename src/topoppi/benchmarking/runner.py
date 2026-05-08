@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import time
+import hashlib
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
@@ -22,6 +23,7 @@ except Exception:  # optional
     psutil = None
 
 from topoppi.config import BenchmarkConfig
+from topoppi import __version__
 from topoppi.benchmarking.metrics_utils import (
     atlas_trainability_metrics,
     avg_energy,
@@ -51,6 +53,7 @@ class BenchmarkRunner:
         self._proc = psutil.Process(os.getpid()) if psutil else None
         self.config.validate()
         self._checkpoint_path = os.path.join(self.config.output_root, self.config.checkpoint_filename)
+        self._checkpoint_fingerprint = self._config_fingerprint()
 
     def run(self) -> Dict[str, object]:
         os.makedirs(self.config.output_root, exist_ok=True)
@@ -60,7 +63,13 @@ class BenchmarkRunner:
 
         prepared_jobs, preprocessing_log = self._prepare_benchmark_jobs(pdb_files)
         if not prepared_jobs:
-            raise ValueError("No valid .pdb files after preprocessing: each file must contain at least two protein chains.")
+            output = self._build_output(
+                preprocessing_log=preprocessing_log,
+                files=[],
+                worker_count=0,
+            )
+            self._write_outputs(output, [])
+            raise ValueError("No valid .pdb files after preprocessing. See benchmark_report.json for skip reasons.")
         completed_results, prepared_jobs = self._load_resume_state(prepared_jobs)
 
         worker_count = self._resolve_worker_count(len(prepared_jobs))
@@ -74,19 +83,40 @@ class BenchmarkRunner:
         )
         all_results = completed_results + new_results
 
-        output = {
+        output = self._build_output(
+            preprocessing_log=preprocessing_log,
+            files=all_results,
+            worker_count=worker_count,
+        )
+        self._write_outputs(output, all_results)
+        return output
+
+    def _build_output(self, preprocessing_log: Dict[str, object], files: List[Dict[str, object]], worker_count: int) -> Dict[str, object]:
+        return {
             "created_at": datetime.utcnow().isoformat() + "Z",
+            "topoppi_version": __version__,
             "config": asdict(self.config),
+            "runtime": {
+                "worker_count": int(worker_count),
+                "config_fingerprint": self._checkpoint_fingerprint,
+            },
             "preprocessing": preprocessing_log,
-            "files": all_results,
-            "summary": aggregate_results(all_results),
+            "files": files,
+            "summary": aggregate_results(files),
         }
 
+    def _write_outputs(self, output: Dict[str, object], results: List[Dict[str, object]]) -> None:
         with open(os.path.join(self.config.output_root, self.config.report_filename), "w", encoding="utf-8") as f:
             json.dump(output, f, indent=2)
-        self._save_checkpoint(all_results)
-        write_csv(all_results, self.config.output_root, filename=self.config.summary_filename)
-        return output
+        self._save_checkpoint(results)
+        write_csv(results, self.config.output_root, filename=self.config.summary_filename)
+
+    def _config_fingerprint(self) -> str:
+        payload = asdict(self.config)
+        payload.pop("output_root", None)
+        payload["topoppi_version"] = __version__
+        data = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        return hashlib.sha256(data).hexdigest()
 
     def _run_files_concurrently(
         self,
@@ -290,12 +320,24 @@ class BenchmarkRunner:
                 self.log(f"[Benchmark][Preprocess] Skipped {pdb_name}: found {len(chain_ids)} protein chain(s)")
                 continue
 
-            if "A" in chain_ids and "B" in chain_ids:
-                chain_a, chain_b = "A", "B"
-                selection_mode = "prefer_AB"
-            else:
-                chain_a, chain_b = chain_ids[0], chain_ids[1]
-                selection_mode = "first_two_chains"
+            chain_a = str(self.config.chain_a).strip()
+            chain_b = str(self.config.chain_b).strip()
+            if chain_a not in chain_ids or chain_b not in chain_ids:
+                skipped_files.append(
+                    {
+                        "pdb": pdb_name,
+                        "reason": (
+                            f"Configured chains not found: requested {chain_a}/{chain_b}; "
+                            f"available protein chains: {', '.join(chain_ids)}"
+                        ),
+                    }
+                )
+                self.log(
+                    f"[Benchmark][Preprocess] Skipped {pdb_name}: requested chains "
+                    f"{chain_a}/{chain_b} not available ({', '.join(chain_ids)})"
+                )
+                continue
+            selection_mode = "configured_chains"
 
             try:
                 coords_a, _ = loader.get_chain_data(chain_a)
@@ -359,8 +401,8 @@ class BenchmarkRunner:
             "rules": [
                 "File must contain at least two protein chains.",
                 "Selected chains must each have >10 amino acids.",
-                "If both A and B chains exist, use A/B.",
-                "Otherwise use the first two protein chains discovered in structure order.",
+                "Use the configured chain IDs for every accepted file.",
+                "Files missing either configured chain are skipped.",
             ],
         }
         return accepted_jobs, summary
@@ -436,6 +478,10 @@ class BenchmarkRunner:
         try:
             with open(self._checkpoint_path, "r", encoding="utf-8") as f:
                 checkpoint = json.load(f)
+            checkpoint_fingerprint = str(checkpoint.get("config_fingerprint") or "")
+            if checkpoint_fingerprint != self._checkpoint_fingerprint:
+                self.log("[Benchmark] Existing checkpoint config fingerprint differs; running full benchmark.")
+                return [], jobs
             file_results = checkpoint.get("files", [])
             if not isinstance(file_results, list):
                 return [], jobs
@@ -451,6 +497,8 @@ class BenchmarkRunner:
     def _save_checkpoint(self, results: List[Dict[str, object]]) -> None:
         payload = {
             "created_at": datetime.utcnow().isoformat() + "Z",
+            "topoppi_version": __version__,
+            "config_fingerprint": self._checkpoint_fingerprint,
             "files": results,
         }
         try:
