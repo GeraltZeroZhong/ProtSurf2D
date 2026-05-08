@@ -1,7 +1,11 @@
 import json
 import logging
 import os
+import hashlib
 from collections import defaultdict
+from datetime import datetime
+
+from topoppi import __version__
 
 logger = logging.getLogger("InteractionEngine")
 
@@ -76,10 +80,20 @@ def generate_prolif_interactions(pdb_path, chain_a, chain_b, log=None):
 
     pdb_dir = os.path.dirname(os.path.abspath(pdb_path))
     pdb_name = os.path.splitext(os.path.basename(pdb_path))[0]
-    out_path = os.path.join(pdb_dir, f"{pdb_name}.prolif.json")
+    chain_tag = f"{str(chain_a).strip()}-{str(chain_b).strip()}".replace(os.sep, "_")
+    out_path = os.path.join(pdb_dir, f"{pdb_name}.{chain_tag}.prolif.json")
     if os.path.exists(out_path):
-        log.info(f"Found existing ProLIF output: {os.path.basename(out_path)}")
-        return out_path
+        try:
+            with open(out_path, "r", encoding="utf-8") as handle:
+                existing = json.load(handle)
+            source_sha = existing.get("source_sha256") if isinstance(existing, dict) else None
+        except Exception:
+            source_sha = None
+        current_sha = _sha256_file(pdb_path)
+        if source_sha and source_sha == current_sha:
+            log.info(f"Found existing ProLIF output: {os.path.basename(out_path)}")
+            return out_path
+        log.warning("Existing ProLIF output is missing or has a stale source hash; regenerating.")
 
     universe = mda.Universe(pdb_path)
 
@@ -142,6 +156,10 @@ def generate_prolif_interactions(pdb_path, chain_a, chain_b, log=None):
     records = _to_records(fp.to_dataframe())
     payload = {
         "engine": "prolif",
+        "topoppi_version": __version__,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "source_pdb": os.path.abspath(pdb_path),
+        "source_sha256": _sha256_file(pdb_path),
         "chain_a": str(chain_a).strip(),
         "chain_b": str(chain_b).strip(),
         "interactions": records,
@@ -150,6 +168,14 @@ def generate_prolif_interactions(pdb_path, chain_a, chain_b, log=None):
         json.dump(payload, handle, indent=2)
     log.info(f"ProLIF JSON generated successfully: {os.path.basename(out_path)}")
     return out_path
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_prolif_data(json_path):

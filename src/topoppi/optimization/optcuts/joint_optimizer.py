@@ -24,6 +24,16 @@ from topoppi.config import OptCutsConfig
 logger = logging.getLogger("UVOOptimizer")
 
 
+def resolve_optcuts_binary(config: OptCutsConfig) -> Optional[str]:
+    """Resolve the executable path for OptCuts from env/config/PATH."""
+
+    bin_path = os.environ.get(config.optcuts_env_var, config.optcuts_bin)
+    resolved_bin = shutil.which(bin_path) if not os.path.isabs(bin_path) else bin_path
+    if not resolved_bin or not os.path.exists(resolved_bin):
+        return None
+    return resolved_bin
+
+
 class OptCutsUVOptimizer:
     """OptCuts-only UV optimizer (no alternating U/S/G loop, no fallback path)."""
 
@@ -130,8 +140,8 @@ class OptCutsUVOptimizer:
 
     def _run_optcuts_for_patch(self, patch: trimesh.Trimesh, reference_uv: np.ndarray, patch_index: int) -> np.ndarray:
         bin_path = os.environ.get(self.config.optcuts_env_var, self.config.optcuts_bin)
-        resolved_bin = shutil.which(bin_path) if not os.path.isabs(bin_path) else bin_path
-        if not resolved_bin or not os.path.exists(resolved_bin):
+        resolved_bin = resolve_optcuts_binary(self.config)
+        if not resolved_bin:
             raise RuntimeError(f"OptCuts binary not found: {bin_path}")
 
         try:

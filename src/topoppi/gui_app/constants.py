@@ -1,14 +1,7 @@
-INTERACTION_TYPES = [
-    'VdWContact',
-    'HydrogenBond',
-    'Hydrophobic',
-    'PiStacking',
-    'PiCation',
-    'CationPi',
-    'Cationic',
-    'Anionic',
-    'HalogenBond',
-    'MetalCoordination'
-]
+from topoppi.interactions.metadata import (
+    DEFAULT_ACTIVE_INTERACTION_TYPES,
+    INTERACTION_COLORS,
+    INTERACTION_TYPES,
+)
 
-DEFAULT_ACTIVE_TYPES = set(INTERACTION_TYPES)
+DEFAULT_ACTIVE_TYPES = set(DEFAULT_ACTIVE_INTERACTION_TYPES)

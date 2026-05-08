@@ -31,6 +31,10 @@ topoppi --help
 topoppi-gui
 ```
 
+For GUI-facing releases, open the window with `tests/fixtures/1bvk.pdb`,
+confirm the single-run and benchmark modes are legible, and refresh
+`docs/assets/gui_screenshot.png` if the layout changed.
+
 For full pipeline validation, install or point to OptCuts:
 
 ```bash

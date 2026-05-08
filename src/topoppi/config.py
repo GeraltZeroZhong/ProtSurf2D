@@ -173,8 +173,26 @@ class GUIConfig:
 
     window_width: int = 1400
     window_height: int = 900
+    min_window_width: int = 1180
+    min_window_height: int = 760
+    sidebar_width: int = 460
+    ttk_theme: str = "clam"
+    tk_scaling: float = 1.2
+    font_family: str = "Segoe UI"
+    font_fallbacks: tuple[str, ...] = ("Segoe UI", "Arial", "DejaVu Sans", "Noto Sans", "Liberation Sans")
+    font_size: int = 10
+    header_font_size: int = 16
+    log_visible_lines: int = 7
+    ui_poll_interval_ms: int = 80
     default_min_points: int = 10
-    filter_valid_only: bool = True
+    default_residue_color: str = "#d62728"
+    auto_save_single_run: bool = True
+    label_font_size: int = 9
+    label_font_min_size: int = 5
+    label_font_max_size: int = 20
+    figure_dpi: int = 300
+    benchmark_output_folder: str = "benchmark_results_resume"
+    default_benchmark_run_mode: str = "resume"
 
 
 @dataclass(frozen=True)

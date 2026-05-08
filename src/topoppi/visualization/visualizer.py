@@ -1,13 +1,16 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.patheffects as patheffects
 from matplotlib.collections import PolyCollection
 from scipy.spatial import KDTree
 import logging
 import os
 import re
+import json
 from topoppi.config import VisualizationConfig
 from topoppi.interactions.interaction_engine import load_prolif_data
+from topoppi.interactions.metadata import INTERACTION_COLORS, INTERACTION_TYPES
 
 logger = logging.getLogger("Visualizer")
 
@@ -42,31 +45,8 @@ class InterfaceVisualizer:
         self.chain_b_id = str(chain_b_id).strip() if chain_b_id else None
 
         # --- Interaction categories (canonicalized from ProLIF output) ---
-        self.interaction_types = [
-            'VdWContact',
-            'HydrogenBond',
-            'Hydrophobic',
-            'PiStacking',
-            'PiCation',
-            'CationPi',
-            'Cationic',
-            'Anionic',
-            'HalogenBond',
-            'MetalCoordination'
-        ]
-        
-        self.interaction_colors = {
-            'VdWContact': '#008080',
-            'HydrogenBond': '#0000FF',
-            'Hydrophobic': '#808080',
-            'PiStacking': '#8A2BE2',
-            'PiCation': '#FF4500',
-            'CationPi': '#FF6347',
-            'Cationic': '#FFA500',
-            'Anionic': '#FF8C00',
-            'HalogenBond': '#00CED1',
-            'MetalCoordination': '#8B4513'
-        }
+        self.interaction_types = list(INTERACTION_TYPES)
+        self.interaction_colors = dict(INTERACTION_COLORS)
         self.patch_fill_palette = [
             '#5A8DEE', '#58C4A3', '#F6C667', '#E78AC3', '#7CC6FE',
             '#B8DE6F', '#FFA06B', '#A78BFA', '#7BDFF2', '#FF9AA2'
@@ -134,6 +114,23 @@ class InterfaceVisualizer:
 
     def _load_prolif_data(self, json_path):
         try:
+            with open(json_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if isinstance(payload, dict):
+                expected_a = str(payload.get("chain_a", "")).strip()
+                expected_b = str(payload.get("chain_b", "")).strip()
+                if expected_a and self.chain_a_id and expected_a != self.chain_a_id:
+                    logger.warning("ProLIF chain_a mismatch (%s != %s). Falling back to geometric heuristics.", expected_a, self.chain_a_id)
+                    self.prolif_data = None
+                    if self.tree_B is None:
+                        self.tree_B = KDTree(self.coords_B)
+                    return
+                if expected_b and self.chain_b_id and expected_b != self.chain_b_id:
+                    logger.warning("ProLIF chain_b mismatch (%s != %s). Falling back to geometric heuristics.", expected_b, self.chain_b_id)
+                    self.prolif_data = None
+                    if self.tree_B is None:
+                        self.tree_B = KDTree(self.coords_B)
+                    return
             data, partners = load_prolif_data(json_path)
             if not data:
                 logger.warning("No ProLIF interactions found. Falling back to geometric heuristics.")
@@ -335,8 +332,18 @@ class InterfaceVisualizer:
                 default_pos = (u_center, v_center + self.config.label_offset)
                 offset = style.get('label_offsets', {}).get(uid, (0.0, 0.0))
                 text_pos = (default_pos[0] + offset[0], default_pos[1] + offset[1])
-                txt = ax.text(text_pos[0], text_pos[1], label_text, fontsize=style['font_size'], 
-                              fontname=style['font_family'], ha='center', fontweight='bold', color='darkred', zorder=20)
+                txt = ax.text(
+                    text_pos[0],
+                    text_pos[1],
+                    label_text,
+                    fontsize=style['font_size'],
+                    fontname=style['font_family'],
+                    ha='center',
+                    fontweight='bold',
+                    color='#2f3640',
+                    zorder=20,
+                )
+                txt.set_path_effects([patheffects.withStroke(linewidth=2.5, foreground='white')])
                 txt.set_gid(uid)
                 connector, = ax.plot([u_center, text_pos[0]], [v_center, text_pos[1]], linestyle=(0, (2, 2)),
                                      color='dimgray', lw=0.8, alpha=0.8, zorder=6)
@@ -347,7 +354,7 @@ class InterfaceVisualizer:
             self._relax_labels(ax, label_records)
 
         center = uv.mean(axis=0)
-        ax.text(center[0], center[1], f"P{patch_id}", fontsize=8, color='black', alpha=0.6)
+        ax.text(center[0], center[1], f"P{patch_id}", fontsize=8, color='#4b5563', alpha=0.35)
         return found_types
 
     def _collect_patch_residue_data(self, patch, uv, include_types=True):

@@ -5,7 +5,7 @@ TopoPPI is a user-friendly Python toolkit for mapping **protein–protein intera
 The project provides:
 
 - a **command-line pipeline** for one-shot interface map generation,
-- a **Tkinter GUI** for interactive analysis and visualization (a screenshot of the GUI is shown below),
+- a **Tkinter GUI** for interactive analysis, benchmark launching, and reproducible figure export,
 - and a **benchmark framework** for multi-structure evaluation and reproducible reporting.
 
 The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a ligand chain, flattens patches to UV space, optimizes UVs with [**OptCuts**](https://github.com/liminchen/OptCuts), and renders annotated interface maps (using ProLIF interactions).
@@ -45,9 +45,9 @@ topoppi-gui
 ```
 
 5. In the GUI:
-   - Load a `.pdb`/`.cif` structure file,
+   - Keep **Single analysis** selected and load a `.pdb`/`.cif` structure file,
    - Set Chain A (receptor) and Chain B (ligand),
-   - Click **Run** to generate the interface map.
+   - Click **Run Single Analysis** to generate and auto-save the interface map.
 
 > Note: [OptCuts](https://github.com/liminchen/OptCuts) is required by the current pipeline. Running without OptCuts is intentionally unsupported.
 
@@ -138,9 +138,10 @@ topoppi-gui
 GUI supports:
 
 - single-file analysis,
-- folder-level benchmark runs,
+- folder-level benchmark runs with explicit `resume`, `new`, and `overwrite` modes,
 - interaction-type filtering and styling,
-- optional OptCuts frame export.
+- optional OptCuts frame export,
+- auto-saved figures and sidecar manifests for reproducibility.
 
 ### 2) Command-line mode
 
@@ -158,7 +159,8 @@ topoppi ./data/1abc.pdb -A A -B B -o interface_map.png --cutoff 9.0 --res 1.0 --
 
 ### 3) Benchmark mode (via GUI workflow)
 
-Select a folder containing `.pdb` files and run **Run Benchmark** in GUI.
+Select **Benchmark**, choose a folder containing `.pdb` files, select a run mode, and run **Run Benchmark** in GUI.
+Benchmark preprocessing uses the configured surface/partner chain IDs for every file.
 Outputs are written under:
 
 - `benchmark_report.json`
@@ -170,11 +172,12 @@ Outputs are written under:
 #### Single-run CLI / GUI outputs
 
 - Main rendered interface image (default: `interface_map.png`, or your `-o/--output` value)
-- Auto-generated ProLIF JSON when `--prolif` is not provided (saved as `<input_basename>.prolif.json` beside the input file)
+- GUI single runs auto-save a figure to the selected save directory and write a `<figure>.topoppi.json` sidecar manifest
+- Auto-generated ProLIF JSON when `--prolif` is not provided (saved as `<input_basename>.<chain_a>-<chain_b>.prolif.json` beside the input file)
 
 #### Benchmark outputs
 
-- `benchmark_report.json`: full structured report
+- `benchmark_report.json`: full structured report with runtime worker count and config fingerprint
 - `benchmark_summary.csv`: tabular summary for all processed structures
 - `benchmark_checkpoint.json`: resume/checkpoint state
 
@@ -211,7 +214,7 @@ CLI defaults are read from `topoppi.config.DEFAULT_RUN_CONFIG`.
 
 ### ProLIF behavior
 
-If `--prolif` is not provided (or file is missing), the pipeline auto-generates `<input_basename>.prolif.json` using MDAnalysis + ProLIF.
+If `--prolif` is not provided (or file is missing), the pipeline auto-generates `<input_basename>.<chain_a>-<chain_b>.prolif.json` using MDAnalysis + ProLIF.
 
 ---
 

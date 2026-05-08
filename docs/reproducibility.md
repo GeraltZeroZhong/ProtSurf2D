@@ -39,8 +39,13 @@ The authoritative default values are defined in `topoppi.config.DEFAULT_RUN_CONF
 Expected outputs:
 
 - rendered interface image,
-- optional `<input_basename>.prolif.json`,
+- optional `<input_basename>.<chain_a>-<chain_b>.prolif.json`,
+- optional GUI figure sidecar manifest (`<figure>.topoppi.json`),
 - process logs.
+
+The GUI manifest records the TopoPPI version, input and ProLIF file checksums,
+selected chains, configuration blocks, resolved OptCuts artifact, git commit,
+stage timings, optimizer diagnostics, style settings, and the run log.
 
 ## Benchmark Runs
 
@@ -49,14 +54,19 @@ The current benchmark preprocessing rules are:
 
 - file must contain at least two protein chains,
 - selected chains must each have more than 10 amino acids,
-- if both `A` and `B` chains exist, use `A/B`,
-- otherwise use the first two protein chains in structure order.
+- configured chain IDs are used for every accepted file,
+- files missing either configured chain are skipped.
 
 Expected benchmark outputs:
 
 - `benchmark_report.json`,
 - `benchmark_summary.csv`,
 - `benchmark_checkpoint.json`.
+
+Benchmark reports include the runtime worker count and a configuration
+fingerprint. Resume mode only accepts checkpoints with a matching fingerprint;
+`new` writes to a timestamped output directory, and `overwrite` removes the
+known report/checkpoint/CSV files before running.
 
 For published tables, archive the input file list, parameter configuration, output files, and checksums.
 

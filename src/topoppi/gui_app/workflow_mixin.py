@@ -1,10 +1,20 @@
 import os
 import threading
-from dataclasses import replace
+import logging
+import hashlib
+import platform
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import asdict, replace
 from datetime import datetime
+from importlib import metadata
+from pathlib import Path
 from tkinter import messagebox
 
 from topoppi.config import BenchmarkConfig, DEFAULT_RUN_CONFIG
+from topoppi.errors import ConfigurationError
 from topoppi.io.io_loader import PDBLoader
 from topoppi.mesh.surface import SurfaceGenerator
 from topoppi.mesh.topology import TopologyManager
@@ -13,6 +23,33 @@ from topoppi.optimization.optcuts import OptCutsUVOptimizer
 from topoppi.visualization.visualizer import InterfaceVisualizer
 from topoppi.interactions.interaction_engine import generate_prolif_interactions
 from topoppi.benchmarking import BenchmarkRunner
+from topoppi.optimization.optcuts import resolve_optcuts_binary
+from .forms import parse_benchmark_form
+
+
+logger = logging.getLogger("topoppi.gui")
+
+
+class _GuiLogAdapter:
+    def __init__(self, log_fn):
+        self._log_fn = log_fn
+
+    def info(self, message, *args):
+        self._emit(message, *args)
+
+    def warning(self, message, *args):
+        self._emit("Warning: " + str(message), *args)
+
+    def error(self, message, *args):
+        self._emit("Error: " + str(message), *args)
+
+    def _emit(self, message, *args):
+        if args:
+            try:
+                message = str(message) % args
+            except TypeError:
+                message = " ".join([str(message), *(str(arg) for arg in args)])
+        self._log_fn(str(message))
 
 
 class WorkflowMixin:
@@ -24,34 +61,44 @@ class WorkflowMixin:
         return os.path.join(base_dir, f"{stem}_optcuts_frames_{ts}")
 
     def start_benchmark(self):
-        folder = self.entry_file.get().strip()
-        if not folder or not os.path.isdir(folder):
-            messagebox.showerror("Error", "Please select a valid folder containing .pdb files.")
+        try:
+            form = parse_benchmark_form(
+                {
+                    "folder": self.entry_file.get(),
+                    "chain_a": self.entry_chain_a.get(),
+                    "chain_b": self.entry_chain_b.get(),
+                    "cutoff": self.entry_cutoff.get(),
+                    "res": self.entry_res.get(),
+                    "sigma": self.entry_sigma.get(),
+                    "optcuts_bin": self.entry_optcuts_bin.get(),
+                    "output_root": self.entry_output_dir.get(),
+                    "run_mode": self.var_benchmark_run_mode.get(),
+                    "max_workers": self.entry_max_workers.get(),
+                }
+            )
+        except ConfigurationError as exc:
+            messagebox.showerror("Invalid Input", str(exc))
             return
 
-        params = {
-            'folder': folder,
-            'chain_a': self.entry_chain_a.get().strip(),
-            'chain_b': self.entry_chain_b.get().strip(),
-            'cutoff': float(self.entry_cutoff.get()),
-            'res': float(self.entry_res.get()),
-            'sigma': float(self.entry_sigma.get()),
-            'patch_gap': DEFAULT_RUN_CONFIG.optcuts.patch_gap,
-            'optcuts_bin': self.entry_optcuts_bin.get().strip() or DEFAULT_RUN_CONFIG.optcuts.optcuts_bin,
-        }
-        self.btn_run.config(state="disabled")
-        self.btn_bench.config(state="disabled")
-        self.progress.stop()
-        self.progress.configure(mode="determinate", maximum=100, value=0)
-        self.log("Starting benchmark pipeline...")
+        params = form.to_params()
+        try:
+            self._preflight_optcuts(params["optcuts_bin"])
+        except ConfigurationError as exc:
+            messagebox.showerror("Invalid OptCuts Configuration", str(exc))
+            return
+        params["run_id"] = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        if params["run_mode"] == "new":
+            params["output_root"] = self._timestamped_output_root(params["output_root"], params["run_id"])
+        self.last_run_params = dict(params)
+        self._update_run_summary()
+        self._begin_task("Starting benchmark pipeline...", progress_mode="determinate")
         threading.Thread(target=self.run_benchmark_pipeline, args=(params,), daemon=True).start()
 
     def run_benchmark_pipeline(self, params):
         try:
-            output_root = os.path.join(params["folder"], "benchmark_results_resume")
             config = BenchmarkConfig(
                 input_folder=params["folder"],
-                output_root=output_root,
+                output_root=params["output_root"],
                 chain_a=params["chain_a"],
                 chain_b=params["chain_b"],
                 surface=replace(DEFAULT_RUN_CONFIG.surface, grid_resolution=params["res"], sigma=params["sigma"]),
@@ -62,13 +109,16 @@ class WorkflowMixin:
                     patch_gap=params["patch_gap"],
                     optcuts_bin=params["optcuts_bin"],
                 ).for_headless(),
+                max_workers=params.get("max_workers"),
                 show_tqdm=False,
-                resume=True,
+                resume=bool(params.get("resume", True)),
             )
+            if params.get("run_mode") == "overwrite":
+                self._clear_benchmark_outputs(config)
             runner = BenchmarkRunner(config=config, log_fn=self.log, progress_fn=self._on_benchmark_progress)
             self.log("Benchmark OptCuts runs in headless mode (viewer disabled).")
             output = runner.run()
-            self.root.after(0, lambda: self.progress.configure(value=100))
+            self.post_to_ui(lambda: self.progress.configure(value=100))
             summary = output.get("summary", {})
             self.log(
                 "Benchmark done. valid_structures={}, lscm_mean={:.4f}, lscm_optcuts_mean={:.4f}, harmonic_mean={:.4f}, spherical_mean={:.4f}, cylindrical_mean={:.4f}".format(
@@ -80,20 +130,20 @@ class WorkflowMixin:
                     float(summary.get("distortion_cylindrical_mean", float("inf"))),
                 )
             )
-            self.root.after(
-                0,
+            self.post_to_ui(
                 lambda: messagebox.showinfo(
                     "Benchmark Completed",
-                    f"Results saved to:\n{output_root}\n\n"
+                    f"Results saved to:\n{params['output_root']}\n\n"
                     "Generated files:\n- benchmark_report.json\n- benchmark_summary.csv",
                 ),
             )
-            self.root.after(0, lambda: self.finish_success())
+            self.post_to_ui(self.finish_success, False)
         except Exception as e:
-            self.root.after(0, lambda msg=str(e): self.show_error(f"Benchmark failed: {msg}"))
+            logger.exception("GUI benchmark failed")
+            self.post_to_ui(self.show_error, f"Benchmark failed: {e}")
 
     def _on_benchmark_progress(self, completed: int, total: int, message: str):
-        self.root.after(0, lambda: self._set_benchmark_progress_ui(completed, total, message))
+        self.post_to_ui(self._set_benchmark_progress_ui, completed, total, message)
 
     def _set_benchmark_progress_ui(self, completed: int, total: int, message: str):
         total_safe = max(1, int(total))
@@ -104,27 +154,38 @@ class WorkflowMixin:
 
     def generate_prolif_interactions(self, pdb_path, chain_a, chain_b):
         self.log("Checking ProLIF requirements...")
-        output_json = generate_prolif_interactions(pdb_path, chain_a, chain_b)
+        output_json = generate_prolif_interactions(pdb_path, chain_a, chain_b, log=_GuiLogAdapter(self.log))
         if output_json:
-            self.root.after(0, lambda: self.entry_prolif.delete(0, "end"))
-            self.root.after(0, lambda: self.entry_prolif.insert(0, output_json))
+            self.post_to_ui(self._set_prolif_entry, output_json)
             return output_json
         self.log("ProLIF interaction generation skipped/failed. Falling back to geometric heuristics.")
         return None
 
+    def _set_prolif_entry(self, output_json):
+        self.entry_prolif.delete(0, "end")
+        self.entry_prolif.insert(0, output_json)
+
     def run_pipeline(self, params):
         try:
-            prolif_file = params.get('prolif')
+            self._preflight_optcuts(params.get("optcuts_bin", DEFAULT_RUN_CONFIG.optcuts.optcuts_bin))
+            stage_timings = {}
+            run_start = time.perf_counter()
+            provided_prolif = params.get('prolif')
+            prolif_file = provided_prolif
             if not prolif_file or not os.path.exists(prolif_file):
                 generated_json = self.generate_prolif_interactions(params['path'], params['chain_a'], params['chain_b'])
                 prolif_file = generated_json if generated_json else None
+            prolif_source = "provided" if provided_prolif and prolif_file == provided_prolif else "generated_or_existing" if prolif_file else "geometric_fallback"
 
             self.log("Loading PDB structure...")
+            t0 = time.perf_counter()
             loader = PDBLoader(params['path'])
             coords_A, atoms_A = loader.get_chain_data(params['chain_a'])
             coords_B, atoms_B = loader.get_chain_data(params['chain_b'])
+            stage_timings["load_structure_sec"] = time.perf_counter() - t0
 
             self.log("Generating molecular surface...")
+            t0 = time.perf_counter()
             surface_config = replace(DEFAULT_RUN_CONFIG.surface, grid_resolution=params['res'], sigma=params['sigma'])
             topology_config = replace(DEFAULT_RUN_CONFIG.topology, distance_cutoff=params['cutoff'])
             optcuts_config = replace(
@@ -141,8 +202,10 @@ class WorkflowMixin:
             mesh_A = surf_gen.generate_mesh()
             if mesh_A is None:
                 raise ValueError("Surface generation failed.")
+            stage_timings["surface_sec"] = time.perf_counter() - t0
 
             self.log("Extracting interface patches...")
+            t0 = time.perf_counter()
             param = Parameterizer(config=DEFAULT_RUN_CONFIG.parameterization)
             optimizer = OptCutsUVOptimizer(optcuts_config)
             if params.get('save_optcuts_frames', False):
@@ -168,12 +231,16 @@ class WorkflowMixin:
             patches = topo.get_interface_patches()
             if not patches:
                 raise ValueError(f"No interface found with cutoff {params['cutoff']:.2f}.")
+            stage_timings["patch_extraction_sec"] = time.perf_counter() - t0
 
             self.log(f"Flattening {len(patches)} patches...")
+            t0 = time.perf_counter()
             parameterized_patches = self._parameterize_patches(patches, param)
             if not parameterized_patches:
                 raise ValueError("LSCM Parameterization failed for all patches.")
+            stage_timings["parameterization_sec"] = time.perf_counter() - t0
 
+            t0 = time.perf_counter()
             valid_patches, valid_count, invalid_count = self._split_interfaces_by_point_count(
                 parameterized_patches,
                 viz,
@@ -184,22 +251,57 @@ class WorkflowMixin:
                 raise ValueError(f"All interfaces are invalid (point count < {params['min_points']}).")
 
             self.log(f"Running OptCuts only on valid interfaces ({len(valid_patches)} patches)...")
+            t0 = time.perf_counter()
             optimized_valid_patches = self._optimize_patches(valid_patches, optimizer)
+            stage_timings["optcuts_sec"] = time.perf_counter() - t0
+            optimizer_report = getattr(optimizer, "get_last_report", lambda: {})()
 
-            if params.get('filter_valid_only', True):
-                selected_patches = optimized_valid_patches
-                self.log("Display mode: valid interfaces only.")
-            else:
-                selected_patches = optimized_valid_patches
-                self.log("Display mode: all interfaces request ignored because invalid interfaces are now excluded before OptCuts.")
+            selected_patches = optimized_valid_patches
+            self.log("Display mode: valid interfaces only.")
 
             self.log("Rendering visualization...")
-            self.cached_viz = viz
-            self.cached_patches = selected_patches
-            self.root.after(0, lambda: self.finish_success())
+            stage_timings["total_pipeline_sec"] = time.perf_counter() - run_start
+            resolved_optcuts = self._optcuts_artifact_block(optcuts_config)
+            manifest = {
+                "schema_version": "1.1",
+                "run_id": params.get("run_id"),
+                "created_at": datetime.utcnow().isoformat() + "Z",
+                "input_file": os.path.abspath(params["path"]),
+                "input_sha256": self._sha256_file(params["path"]),
+                "output_dir": os.path.abspath(params.get("output_dir") or os.path.dirname(params["path"]) or os.getcwd()),
+                "chain_a": params["chain_a"],
+                "chain_b": params["chain_b"],
+                "prolif_file": os.path.abspath(prolif_file) if prolif_file else None,
+                "prolif_sha256": self._sha256_file(prolif_file) if prolif_file else None,
+                "prolif_source": prolif_source,
+                "environment": self._environment_block(),
+                "git_commit": self._git_commit(),
+                "optcuts_resolved": resolved_optcuts,
+                "surface": asdict(surface_config),
+                "topology": asdict(topology_config),
+                "parameterization": asdict(DEFAULT_RUN_CONFIG.parameterization),
+                "optcuts": asdict(optcuts_config),
+                "visualization": asdict(DEFAULT_RUN_CONFIG.visualization),
+                "stage_timings": stage_timings,
+                "optimizer_report": optimizer_report,
+                "interface_counts": {
+                    "raw_patches": len(patches),
+                    "parameterized_patches": len(parameterized_patches),
+                    "valid_patches": valid_count,
+                    "invalid_patches": invalid_count,
+                    "displayed_patches": len(selected_patches),
+                },
+            }
+            self.post_to_ui(self.accept_pipeline_result, viz, selected_patches, manifest)
         except Exception as e:
-            error_message = str(e)
-            self.root.after(0, lambda msg=error_message: self.show_error(msg))
+            logger.exception("GUI single-run pipeline failed")
+            self.post_to_ui(self.show_error, str(e))
+
+    def accept_pipeline_result(self, viz, patches, manifest):
+        self.cached_viz = viz
+        self.cached_patches = patches
+        self.last_run_manifest = manifest
+        self.finish_success(True)
 
     def _parameterize_patches(self, patches, parameterizer):
         valid_patches = []
@@ -262,3 +364,69 @@ class WorkflowMixin:
             else:
                 invalid += 1
         return valid, len(valid), invalid
+
+    def _preflight_optcuts(self, optcuts_bin: str) -> None:
+        config = replace(DEFAULT_RUN_CONFIG.optcuts, optcuts_bin=optcuts_bin)
+        resolved = resolve_optcuts_binary(config)
+        if not resolved:
+            raise ConfigurationError(
+                f"OptCuts binary not found: {optcuts_bin}. Set an absolute path or {config.optcuts_env_var}."
+            )
+
+    def _timestamped_output_root(self, output_root: str, run_id: str) -> str:
+        base = output_root.rstrip(os.sep)
+        return f"{base}_{run_id}"
+
+    def _clear_benchmark_outputs(self, config: BenchmarkConfig) -> None:
+        os.makedirs(config.output_root, exist_ok=True)
+        for filename in (config.checkpoint_filename, config.report_filename, config.summary_filename):
+            path = os.path.join(config.output_root, filename)
+            if os.path.exists(path):
+                os.remove(path)
+                self.log(f"Removed previous benchmark output: {path}")
+
+    def _sha256_file(self, path: str | None) -> str | None:
+        if not path or not os.path.exists(path):
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _git_commit(self) -> str | None:
+        repo_root = Path(__file__).resolve().parents[3]
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:
+            return None
+        return proc.stdout.strip() or None
+
+    def _environment_block(self) -> dict[str, object]:
+        names = ["numpy", "scipy", "biopython", "matplotlib", "trimesh", "scikit-image", "topoppi"]
+        versions = {}
+        for name in names:
+            try:
+                versions[name] = metadata.version(name)
+            except metadata.PackageNotFoundError:
+                versions[name] = None
+        return {
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "packages": versions,
+        }
+
+    def _optcuts_artifact_block(self, config) -> dict[str, object]:
+        resolved = resolve_optcuts_binary(config)
+        return {
+            "requested": os.environ.get(config.optcuts_env_var, config.optcuts_bin),
+            "resolved": resolved,
+            "sha256": self._sha256_file(resolved) if resolved else None,
+            "env_var": config.optcuts_env_var,
+        }
