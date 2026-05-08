@@ -32,13 +32,19 @@ bash tools/OptCuts/install_optcuts.sh
 which OptCuts_bin
 ```
 
-3. Launch GUI:
+3. Install TopoPPI in editable mode:
 
 ```bash
-python gui.py
+pip install -e ".[benchmark,interactions,meshio]"
 ```
 
-4. In the GUI:
+4. Launch GUI:
+
+```bash
+topoppi-gui
+```
+
+5. In the GUI:
    - Load a `.pdb`/`.cif` structure file,
    - Set Chain A (receptor) and Chain B (ligand),
    - Click **Run** to generate the interface map.
@@ -60,9 +66,12 @@ python gui.py
 
 ### Main entry points
 
-- `main.py`: command-line pipeline.
-- `gui.py`: interactive desktop GUI.
-- `src/benchmarking/*`: benchmark engine, metrics, aggregation, and CSV/JSON reporting.
+- `topoppi`: installed command-line pipeline.
+- `topoppi-gui`: installed Tkinter GUI.
+- `topoppi.pipeline.run_interface_mapping`: importable single-structure API.
+- `topoppi.benchmarking`: benchmark engine, metrics, aggregation, and CSV/JSON reporting.
+
+All user-facing defaults live in `topoppi.config`.
 
 ---
 
@@ -81,7 +90,10 @@ python gui.py
 ```bash
 conda env create -f environment.yml
 conda activate bio3d
+pip install -e ".[benchmark,interactions,meshio]"
 ```
+
+The repository includes `pyproject.toml` for standard Python packaging and future PyPI publication.
 
 ### Install bundled [OptCuts](https://github.com/liminchen/OptCuts) binary
 
@@ -97,12 +109,12 @@ After installation, verify:
 which OptCuts_bin
 ```
 
-> Required: the current pipeline does **not** support running without [OptCuts](https://github.com/liminchen/OptCuts).
+> Required: the current pipeline does **not** support running without [OptCuts](https://github.com/liminchen/OptCuts). You can also set `TOPOPPI_OPTCUTS_BIN=/absolute/path/to/OptCuts_bin`.
 
 ### Python dependencies
 
-See `environment.yml` for the authoritative list.  
-In particular, `prolif` and `MDAnalysis` are required dependencies for this project.
+See `environment.yml` and `pyproject.toml` for the authoritative lists.
+The full Conda environment includes ProLIF/MDAnalysis for automatic interaction generation.
 
 Main dependencies include:
 
@@ -120,7 +132,7 @@ Main dependencies include:
 Launch the desktop app:
 
 ```bash
-python gui.py
+topoppi-gui
 ```
 
 GUI supports:
@@ -135,13 +147,13 @@ GUI supports:
 Run the full pipeline on a single PDB/mmCIF structure:
 
 ```bash
-python main.py <input.pdb|input.cif> -A <chainA> -B <chainB> [options]
+topoppi <input.pdb|input.cif> [options]
 ```
 
 Example:
 
 ```bash
-python main.py ./data/1abc.pdb -A A -B B -o interface_map.png --cutoff 9.0 --res 1.0 --sigma 1.5
+topoppi ./data/1abc.pdb -A A -B B -o interface_map.png --cutoff 9.0 --res 1.0 --sigma 1.5
 ```
 
 ### 3) Benchmark mode (via GUI workflow)
@@ -170,30 +182,29 @@ Outputs are written under:
 
 ## Configuration
 
-### Command-line options (`main.py`)
+### Command-line options (`topoppi`)
 
 - `pdb_file`: input structure file (`.pdb` or `.cif`)
-- `-A, --chain_a`: receptor/surface chain ID (required)
-- `-B, --chain_b`: ligand chain ID (required)
+- `-A, --chain-a`: receptor/surface chain ID
+- `-B, --chain-b`: ligand chain ID
 - `--prolif`: optional ProLIF JSON path
-- `--cutoff` (default `9.0`): interface distance cutoff (Å)
-- `--res` (default `2.0`): surface grid resolution (Å)
-- `--sigma` (default `1.0`): Gaussian smoothing sigma
+- `--cutoff`: interface distance cutoff (Å)
+- `--res`: surface grid resolution (Å)
+- `--sigma`: Gaussian smoothing sigma
 - `-o, --output` (default `interface_map.png`): output image path
 - `--optcuts-bin` (default `OptCuts_bin`): OptCuts executable path/name
-- `--patch-gap` (default `0.08`): minimum spacing between charts in global UV atlas
+- `--patch-gap`: minimum spacing between charts in global UV atlas
 - `-v, --verbose`: verbose logging
 
-> Note: `--disable-optcuts` is intentionally unsupported in current pipeline; OptCuts is required.
+CLI defaults are read from `topoppi.config.DEFAULT_RUN_CONFIG`.
 
 ### Benchmark configuration (`BenchmarkConfig`)
 
-`src/benchmarking/config.py` defines reusable benchmark settings, including:
+`topoppi.config.BenchmarkConfig` defines reusable benchmark settings, including:
 
 - input/output roots,
 - chain IDs,
-- geometry parameters (`cutoff`, `res`, `sigma`),
-- OptCuts controls (`patch_gap`, `optcuts_bin`, `optcuts_headless`, `optcuts_quick_mode`),
+- nested surface/topology/parameterization/OptCuts configuration,
 - parallelism (`max_workers`),
 - resume behavior (`resume`),
 - minimum patch validity thresholds.
@@ -206,16 +217,24 @@ If `--prolif` is not provided (or file is missing), the pipeline auto-generates 
 
 ## Examples
 
+### Test fixture: 1BVK
+
+The repository includes `tests/fixtures/1bvk.pdb` for smoke tests and reproducible examples.
+
+```bash
+topoppi tests/fixtures/1bvk.pdb -A A -B C -o 1bvk_interface.png
+```
+
 ### CLI: basic run
 
 ```bash
-python main.py ./examples/complex.pdb -A A -B B -o complex_interface.png
+topoppi ./data/complex.pdb -A A -B B -o complex_interface.png
 ```
 
 ### CLI: custom OptCuts binary and tighter patch gap
 
 ```bash
-python main.py ./examples/complex.pdb -A A -B C \
+topoppi ./data/complex.pdb -A A -B C \
   --optcuts-bin /usr/local/bin/OptCuts_bin \
   --patch-gap 0.05 \
   --output complex_interface_optcuts.png
@@ -224,25 +243,44 @@ python main.py ./examples/complex.pdb -A A -B C \
 ### CLI: use existing ProLIF interactions
 
 ```bash
-python main.py ./examples/complex.pdb -A A -B B \
-  --prolif ./examples/complex.prolif.json \
+topoppi ./data/complex.pdb -A A -B B \
+  --prolif ./data/complex.prolif.json \
   --output complex_with_prolif.png
+```
+
+### Python: run one interface map programmatically
+
+```python
+from topoppi.config import TopoPPIRunConfig
+from topoppi.pipeline import run_interface_mapping
+
+result = run_interface_mapping(
+    TopoPPIRunConfig(
+        pdb_file="./data/complex.pdb",
+        chain_a="A",
+        chain_b="B",
+        output_file="complex_interface.png",
+    )
+)
+print(result.to_dict())
 ```
 
 ### Python: run benchmark programmatically
 
 ```python
-from src.benchmark import BenchmarkConfig, BenchmarkRunner
+from dataclasses import replace
+
+from topoppi.config import BenchmarkConfig, DEFAULT_RUN_CONFIG
+from topoppi.benchmarking import BenchmarkRunner
 
 config = BenchmarkConfig(
     input_folder="./dataset",
     output_root="./benchmark_results",
     chain_a="A",
     chain_b="B",
-    cutoff=9.0,
-    res=1.0,
-    sigma=1.0,
-    optcuts_bin="OptCuts_bin",
+    surface=replace(DEFAULT_RUN_CONFIG.surface, grid_resolution=1.0, sigma=1.0),
+    topology=replace(DEFAULT_RUN_CONFIG.topology, distance_cutoff=9.0),
+    optcuts=replace(DEFAULT_RUN_CONFIG.optcuts, optcuts_bin="OptCuts_bin").for_headless(),
     resume=True,
 )
 
@@ -257,24 +295,28 @@ print(report["summary"])
 
 ```text
 TopoPPI/
-├─ main.py                        # CLI pipeline entry
-├─ gui.py                         # GUI entry (Tkinter)
+├─ pyproject.toml                 # Python package metadata and console scripts
 ├─ environment.yml                # Conda environment definition
+├─ docs/                          # Release and reproducibility notes
+├─ tests/                         # Lightweight smoke/unit tests
 ├─ tools/
 │  └─ OptCuts/
 │     ├─ OptCuts_bin              # Bundled OptCuts executable
 │     ├─ install_optcuts.sh       # Installer script for Conda env
 │     └─ LICENSE.txt              # OptCuts license
 └─ src/
-   ├─ io/                         # PDB/mmCIF loading and chain extraction
-   ├─ mesh/                       # Surface generation, topology, parameterization
-   ├─ optimization/
-   │  └─ optcuts/                 # OptCuts-based UV optimization
-   ├─ interactions/               # ProLIF integration and interaction normalization
-   ├─ visualization/              # 2D interface rendering
-   ├─ atlas/                      # Atlas constraints, state, metrics
-   ├─ gui_app/                    # GUI mixins and application orchestration
-   └─ benchmarking/               # Benchmark runner, metrics, reporting
+   └─ topoppi/
+      ├─ cli.py                   # CLI entry point
+      ├─ config.py                # Central runtime, benchmark, GUI, and OptCuts configuration
+      ├─ pipeline.py              # Importable single-run API
+      ├─ io/                      # PDB/mmCIF loading and chain extraction
+      ├─ mesh/                    # Surface generation, topology, parameterization
+      ├─ optimization/            # OptCuts-based UV optimization
+      ├─ interactions/            # ProLIF integration and interaction normalization
+      ├─ visualization/           # 2D interface rendering
+      ├─ atlas/                   # Atlas metrics
+      ├─ gui_app/                 # GUI mixins and application orchestration
+      └─ benchmarking/            # Benchmark runner, metrics, reporting
 ```
 
 ---
@@ -297,7 +339,7 @@ which OptCuts_bin
 If still missing, pass an explicit binary path:
 
 ```bash
-python main.py <input.pdb|input.cif> -A <chainA> -B <chainB> --optcuts-bin /absolute/path/to/OptCuts_bin
+topoppi <input.pdb|input.cif> -A <chainA> -B <chainB> --optcuts-bin /absolute/path/to/OptCuts_bin
 ```
 
 ### ProLIF/MDAnalysis import errors
@@ -322,6 +364,15 @@ Symptoms:
 
 Fix:
 - Use the project environment and keep `igl` in the documented `2.6.x` range.
+
+---
+
+## Changelog
+
+- **v1.0** is the initial public release of TopoPPI.
+- **v1.1** content is being prepared for the next release.
+
+See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
 ---
 

@@ -18,6 +18,15 @@ dependencies:
   - shapely
   - openbabel 
   - mdanalysis
+  - rdkit
+  - psutil
+  - tqdm
+  - meshio
   - pip
   - pip:
     - prolif
+    - pytest
+    - pytest-cov
+    - ruff
+    - build
+    - twine
