@@ -1,0 +1,230 @@
+import numpy as np
+import trimesh
+from scipy.spatial import KDTree
+import logging
+
+from topoppi.config import TopologyConfig
+
+logger = logging.getLogger("Topology")
+
+class TopologyManager:
+    """
+    Manages the extraction and topological processing of protein interface patches.
+    """
+    def __init__(self, mesh_A: trimesh.Trimesh, coords_B: np.ndarray, config: TopologyConfig | None = None):
+        """
+        Initialize the Topology Manager.
+        
+        Args:
+            mesh_A: Full surface mesh of Chain A (trimesh.Trimesh).
+            coords_B: Array of atom coordinates for Chain B (N, 3).
+        """
+        self.config = config or TopologyConfig()
+        self.config.validate()
+        # Deep copy to avoid modifying the original mesh externally
+        self.mesh_A = mesh_A.copy()
+        self.coords_B = coords_B
+        
+        # Pre-process Mesh A: Ensure it's valid before we start slicing it.
+        # This removes duplicate vertices which can break LSCM later.
+        self.mesh_A.process(validate=True)
+        
+        # Build KDTree for Chain B once for fast queries
+        self.tree_B = KDTree(self.coords_B)
+        
+        logger.info(f"Initialized TopologyManager with Mesh A ({len(self.mesh_A.vertices)} verts) and {len(coords_B)} atoms of B.")
+
+    def get_interface_patches(self) -> list:
+        """
+        Extract interface patches and split them into separate connected components.
+        
+        Args:
+            Distance and filtering parameters are provided by ``TopologyConfig``.
+            
+        Returns:
+            List[trimesh.Trimesh]: A list of clean, topologically simple mesh patches.
+        """
+        distance_cutoff = self.config.distance_cutoff
+        min_patch_vertices = self.config.min_patch_vertices
+        logger.info(f"Extracting patches with cutoff={distance_cutoff}A...")
+        
+        # 1. Vertex Selection (KDTree Query)
+        dists, _ = self.tree_B.query(self.mesh_A.vertices)
+        vertex_mask = dists < distance_cutoff
+        
+        if not np.any(vertex_mask):
+            logger.warning("No interface found! Check your cutoff or coordinates.")
+            return []
+
+        # 2. Face Selection (Expansion)
+        face_mask = vertex_mask[self.mesh_A.faces].any(axis=1)
+        
+        # 3. Submesh Extraction
+        raw_submesh = self.mesh_A.submesh([face_mask], append=True)
+        
+        # Robustness Fix: Handle list return type
+        if isinstance(raw_submesh, list):
+            if len(raw_submesh) == 0:
+                return []
+            raw_submesh = trimesh.util.concatenate(raw_submesh)
+
+        if raw_submesh is None or len(raw_submesh.vertices) == 0:
+            logger.warning("Submesh extraction resulted in empty mesh.")
+            return []
+
+        # 4. Connectivity Splitting
+        components = raw_submesh.split(only_watertight=False)
+        logger.info(f"Raw interface split into {len(components)} components.")
+        
+        valid_patches = []
+        for i, comp in enumerate(components):
+            # 5. Noise Filtering
+            if len(comp.vertices) < min_patch_vertices:
+                logger.info(f"  Dropped component {i} (Vertices: {len(comp.vertices)} < {min_patch_vertices})")
+                continue
+                
+            # 6. Patch Sanitization
+            cleaned_patch = self._sanitize_patch(comp)
+            
+            if cleaned_patch is not None:
+                cleaned_patch.metadata['original_index'] = i 
+                valid_patches.append(cleaned_patch)
+        
+        logger.info(f"Retained {len(valid_patches)} valid patches after filtering.")
+        return valid_patches
+
+    def _sanitize_patch(self, mesh: trimesh.Trimesh):
+        """
+        Clean a single patch to prepare it for parameterization.
+        """
+        try:
+            # Remove vertices not used in any face
+            mesh.remove_unreferenced_vertices()
+            
+            # Remove faces with zero area
+            try:
+                valid_faces = mesh.area_faces > self.config.degenerate_face_area
+                if not np.all(valid_faces):
+                    mesh.update_faces(valid_faces)
+            except Exception as e:
+                logger.warning(f"Skipping degenerate face removal due to: {e}")
+            
+            mesh.merge_vertices()
+
+            # Remove triangles adjacent to non-manifold edges (edge incidence > 2).
+            # LSCM expects a 2-manifold patch; these faces make the linear system ill-posed.
+            self._remove_nonmanifold_faces(mesh, max_edge_face_incidence=self.config.max_edge_face_incidence)
+            self._remove_nonmanifold_vertices(mesh)
+
+            # Keep the largest connected component after sanitation.
+            components = mesh.split(only_watertight=False)
+            if len(components) > 1:
+                largest = max(components, key=lambda m: len(m.vertices))
+                mesh.vertices = largest.vertices.copy()
+                mesh.faces = largest.faces.copy()
+                mesh.remove_unreferenced_vertices()
+
+            # IMPORTANT: do not forcibly smooth open boundary patches.
+            # Laplacian smoothing can shrink boundaries and create self-intersections/
+            # near-zero-area triangles, which destabilize LSCM.
+            return mesh
+            
+        except Exception as e:
+            logger.error(f"Error sanitizing patch: {e}")
+            logger.warning("Returning partially sanitized patch due to error.")
+            return mesh
+
+    @staticmethod
+    def _remove_nonmanifold_faces(mesh: trimesh.Trimesh, max_edge_face_incidence: int):
+        """
+        Remove faces that touch non-manifold edges (shared by >2 faces).
+        """
+        if len(mesh.faces) == 0:
+            return
+
+        edges = mesh.edges_sorted
+        unique_edges, inverse = np.unique(edges, axis=0, return_inverse=True)
+        edge_counts = np.bincount(inverse, minlength=len(unique_edges))
+
+        # Each face contributes 3 consecutive edges in mesh.edges_sorted.
+        face_edge_counts = edge_counts[inverse].reshape(-1, 3)
+        manifold_face_mask = np.all(face_edge_counts <= max_edge_face_incidence, axis=1)
+
+        if not np.all(manifold_face_mask):
+            removed_faces = int(np.count_nonzero(~manifold_face_mask))
+            mesh.update_faces(manifold_face_mask)
+            mesh.remove_unreferenced_vertices()
+            logger.warning(f"Removed {removed_faces} faces adjacent to non-manifold edges.")
+
+    @staticmethod
+    def _remove_nonmanifold_vertices(mesh: trimesh.Trimesh):
+        """
+        Remove faces around non-manifold vertices.
+
+        A manifold vertex should have one connected fan ("umbrella") of incident faces.
+        If incident faces split into multiple disconnected fans around one vertex, the
+        vertex is non-manifold and tends to break boundary-loop extraction in libigl.
+        """
+        if len(mesh.faces) == 0:
+            return
+
+        faces = mesh.faces
+        faces_per_vertex = [[] for _ in range(len(mesh.vertices))]
+        for fi, tri in enumerate(faces):
+            faces_per_vertex[tri[0]].append(fi)
+            faces_per_vertex[tri[1]].append(fi)
+            faces_per_vertex[tri[2]].append(fi)
+
+        nonmanifold_vertices = set()
+        for v_idx, incident in enumerate(faces_per_vertex):
+            if len(incident) <= 1:
+                continue
+
+            incident_set = set(incident)
+            local_adj = {fi: [] for fi in incident}
+            for fi in incident:
+                tri_i = set(faces[fi])
+                tri_i.discard(v_idx)
+                for fj in incident:
+                    if fi >= fj:
+                        continue
+                    tri_j = set(faces[fj])
+                    tri_j.discard(v_idx)
+                    # Two incident faces are connected in the umbrella if they share
+                    # the edge that also contains v_idx (i.e., one non-v vertex shared).
+                    if len(tri_i.intersection(tri_j)) == 1:
+                        local_adj[fi].append(fj)
+                        local_adj[fj].append(fi)
+
+            # Count connected components of incident-face fan graph.
+            seen = set()
+            components = 0
+            for fi in incident:
+                if fi in seen:
+                    continue
+                components += 1
+                stack = [fi]
+                seen.add(fi)
+                while stack:
+                    cur = stack.pop()
+                    for nei in local_adj[cur]:
+                        if nei in incident_set and nei not in seen:
+                            seen.add(nei)
+                            stack.append(nei)
+
+            if components > 1:
+                nonmanifold_vertices.add(v_idx)
+
+        if nonmanifold_vertices:
+            old_face_count = len(faces)
+            keep_faces = ~np.any(np.isin(faces, list(nonmanifold_vertices)), axis=1)
+            mesh.update_faces(keep_faces)
+            mesh.remove_unreferenced_vertices()
+            removed_faces = old_face_count - len(mesh.faces)
+            preview = sorted(nonmanifold_vertices)[:8]
+            logger.warning(
+                "Removed non-manifold umbrella vertices: "
+                f"count={len(nonmanifold_vertices)}, removed_faces={removed_faces}, "
+                f"sample_vertex_ids={preview}."
+            )
+

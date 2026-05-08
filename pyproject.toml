@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "topoppi"
+version = "1.0.0"
+description = "Protein-protein interaction interface mapping from 3D structures to 2D UV atlases."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  {name = "TopoPPI contributors"}
+]
+keywords = ["protein-protein interaction", "bioinformatics", "surface mesh", "uv atlas", "computational biology"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+  "numpy>=1.21",
+  "scipy",
+  "biopython",
+  "scikit-image",
+  "matplotlib",
+  "trimesh",
+  "networkx",
+  "pillow",
+  "rtree",
+  "shapely",
+  "libigl>=2.6,<2.7",
+]
+
+[project.optional-dependencies]
+benchmark = [
+  "psutil",
+  "tqdm",
+]
+interactions = [
+  "MDAnalysis",
+  "prolif",
+  "rdkit",
+]
+meshio = [
+  "meshio",
+]
+dev = [
+  "build",
+  "pytest",
+  "pytest-cov",
+  "ruff",
+  "twine",
+]
+all = [
+  "psutil",
+  "tqdm",
+  "MDAnalysis",
+  "prolif",
+  "rdkit",
+  "meshio",
+]
+
+[project.urls]
+Homepage = "https://github.com/GeraltZeroZhong/TopoPPI"
+Repository = "https://github.com/GeraltZeroZhong/TopoPPI"
+Issues = "https://github.com/GeraltZeroZhong/TopoPPI/issues"
+
+[project.scripts]
+topoppi = "topoppi.cli:main"
+topoppi-gui = "topoppi.gui:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+  "integration: tests that exercise multi-stage pipeline behavior",
+  "slow: tests that may take significant time",
+  "requires_optcuts: tests that require the external OptCuts binary",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

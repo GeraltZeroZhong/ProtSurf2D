@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use TopoPPI in your research, please cite this software."
+title: "TopoPPI: Protein-protein interaction interface mapping to 2D UV atlases"
+version: "1.0.0"
+date-released: "2026-05-08"
+repository-code: "https://github.com/GeraltZeroZhong/TopoPPI"
+license: "MIT"
+authors:
+  - name: "TopoPPI contributors"

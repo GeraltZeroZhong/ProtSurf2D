@@ -1,0 +1,10 @@
+{
+  "engine": "prolif",
+  "chain_a": "A",
+  "chain_b": "B",
+  "interactions": [
+    {"res_a_seq": "1", "res_b_seq": "2", "interaction": "HBAcceptor"},
+    {"res_a_seq": "2A", "res_b_seq": "5", "interaction": "Hydrophobic"},
+    {"res_a_seq": "bad", "res_b_seq": "6", "interaction": "Unknown"}
+  ]
+}
