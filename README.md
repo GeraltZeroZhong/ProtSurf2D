@@ -1,5 +1,7 @@
 # TopoPPI
 
+> **Release:** This README targets `topoppi 1.1`. The matching GitHub release tag is `v1.1`.
+
 TopoPPI maps **protein-protein interaction (PPI) interfaces** from 3D structures into annotated 2D UV atlases. It is built for interactive inspection, reproducible figure export, and benchmark-style evaluation across structure sets.
 
 The toolkit includes:
@@ -11,7 +13,7 @@ The toolkit includes:
 
 The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a partner chain, flattens patches to UV space, optimizes UVs with [**OptCuts**](https://github.com/liminchen/OptCuts), and renders annotated interface maps.
 
-<img width="1920" height="1032" alt="TopoPPI GUI showing the Basic workflow and interface map" src="./docs/assets/3ff22687bd403a67cd66caeacc95baee.png" />
+<img width="1920" height="1032" alt="TopoPPI GUI showing the Basic workflow and interface map" src="https://raw.githubusercontent.com/GeraltZeroZhong/TopoPPI/v1.1/docs/assets/3ff22687bd403a67cd66caeacc95baee.png" />
 
 ---
 
@@ -26,17 +28,23 @@ conda env create -f environment.yml
 conda activate bio3d
 ```
 
-2. Install bundled OptCuts into the active Conda environment:
-
-```bash
-bash tools/OptCuts/install_optcuts.sh
-which OptCuts_bin
-```
-
-3. Install TopoPPI in editable mode:
+2. Install TopoPPI in editable mode:
 
 ```bash
 pip install -e ".[benchmark,interactions,meshio]"
+```
+
+3. Install OptCuts into the active Conda environment:
+
+```bash
+topoppi-install-optcuts
+which OptCuts_bin
+```
+
+   Source checkout users can also install the bundled binary directly:
+
+```bash
+bash tools/OptCuts/install_optcuts.sh
 ```
 
 4. Launch GUI:
@@ -52,6 +60,7 @@ topoppi-gui
    - Click **Run Single Analysis** to generate and auto-save the interface map.
 
 > Note: [OptCuts](https://github.com/liminchen/OptCuts) is required by the current pipeline. Running without OptCuts is intentionally unsupported.
+> PyPI wheels do not include the OptCuts binary, but the `topoppi-install-optcuts` command downloads the Linux x86-64 binary from the matching GitHub release and installs it into your active Conda environment or `~/.local/bin`.
 
 ---
 
@@ -70,6 +79,7 @@ topoppi-gui
 
 - `topoppi`: installed command-line pipeline.
 - `topoppi-gui`: installed Tkinter GUI.
+- `topoppi-install-optcuts`: download and install the Linux x86-64 OptCuts binary from the matching GitHub release.
 - `topoppi.pipeline.run_interface_mapping`: importable single-structure API.
 - `topoppi.benchmarking`: benchmark engine, metrics, aggregation, and CSV/JSON reporting.
 
@@ -87,7 +97,7 @@ All user-facing defaults live in `topoppi.config`.
 - **ProLIF + MDAnalysis are recommended** for automatic typed interaction generation; the GUI can leave ProLIF blank and fall back to geometric heuristics if generation is unavailable
 - **OptCuts binary (`OptCuts_bin`) must be installed** and available in your PATH (or passed via `--optcuts-bin`)
 
-### Create environment
+### Create environment from a source checkout
 
 ```bash
 conda env create -f environment.yml
@@ -95,11 +105,29 @@ conda activate bio3d
 pip install -e ".[benchmark,interactions,meshio]"
 ```
 
-The repository includes `pyproject.toml` for standard Python packaging and future PyPI publication.
+The repository includes `pyproject.toml` for standard Python packaging and PyPI publication.
 
-### Install bundled [OptCuts](https://github.com/liminchen/OptCuts) binary
+### Install from PyPI
 
-The repository includes a helper script that installs `tools/OptCuts/OptCuts_bin` into your active Conda environment:
+```bash
+conda create -n topoppi python=3.10
+conda activate topoppi
+pip install "topoppi[benchmark,interactions,meshio]"
+topoppi-install-optcuts
+which OptCuts_bin
+```
+
+For this release, `topoppi-install-optcuts` downloads from the matching GitHub release tag, for example `v1.1`. It currently supports Linux x86-64 release artifacts. On other platforms, build OptCuts manually and set `TOPOPPI_OPTCUTS_BIN=/absolute/path/to/OptCuts_bin`.
+
+### Install [OptCuts](https://github.com/liminchen/OptCuts) binary
+
+For PyPI installs, use the installed downloader:
+
+```bash
+topoppi-install-optcuts
+```
+
+From a source checkout, the repository also includes a helper script that installs `tools/OptCuts/OptCuts_bin` into your active Conda environment:
 
 ```bash
 bash tools/OptCuts/install_optcuts.sh
@@ -112,6 +140,7 @@ which OptCuts_bin
 ```
 
 > Required: the current pipeline does **not** support running without [OptCuts](https://github.com/liminchen/OptCuts). You can also set `TOPOPPI_OPTCUTS_BIN=/absolute/path/to/OptCuts_bin`.
+> PyPI source and wheel distributions intentionally do not include `tools/OptCuts`; `topoppi-install-optcuts` downloads the release-provided binary artifact instead.
 
 ### Python dependencies
 
@@ -123,7 +152,7 @@ Main dependencies include:
 - `numpy`, `scipy`, `matplotlib`
 - `biopython`, `scikit-image`, `trimesh`, `igl` (**2.6.x**)
 - `networkx`, `rtree`, `shapely`, `pillow`
-- `openbabel`, `MDAnalysis`, `prolif`
+- optional interaction extras: `MDAnalysis`, `prolif`, `rdkit`
 
 ---
 
@@ -196,13 +225,14 @@ Outputs are written under:
 - `pdb_file`: input structure file (`.pdb` or `.cif`)
 - `-A, --chain-a`: receptor/surface chain ID
 - `-B, --chain-b`: ligand chain ID
-- `--prolif`: optional ProLIF JSON path
+- `--prolif` (`--arpeggio` alias): optional ProLIF JSON path
 - `--cutoff`: interface distance cutoff (Å)
 - `--res`: surface grid resolution (Å)
 - `--sigma`: Gaussian smoothing sigma
 - `-o, --output` (default `interface_map.png`): output image path
 - `--optcuts-bin` (default `OptCuts_bin`): OptCuts executable path/name
 - `--patch-gap`: minimum spacing between charts in global UV atlas
+- `--show`: display the Matplotlib figure after saving
 - `-v, --verbose`: verbose logging
 
 CLI defaults are read from `topoppi.config.DEFAULT_RUN_CONFIG`.
@@ -310,14 +340,16 @@ TopoPPI/
 ├─ tests/                         # Lightweight smoke/unit tests
 ├─ tools/
 │  └─ OptCuts/
-│     ├─ OptCuts_bin              # Bundled OptCuts executable
+│     ├─ OptCuts_bin              # Source-checkout convenience executable
 │     ├─ install_optcuts.sh       # Installer script for Conda env
+│     ├─ NOTICE.md                # Binary provenance and packaging policy
 │     └─ LICENSE.txt              # OptCuts license
 └─ src/
-   └─ topoppi/
-      ├─ cli.py                   # CLI entry point
-      ├─ config.py                # Central runtime, benchmark, GUI, and OptCuts configuration
-      ├─ pipeline.py              # Importable single-run API
+	   └─ topoppi/
+	      ├─ cli.py                   # CLI entry point
+	      ├─ config.py                # Central runtime, benchmark, GUI, and OptCuts configuration
+	      ├─ install_optcuts.py       # Release artifact downloader for OptCuts
+	      ├─ pipeline.py              # Importable single-run API
       ├─ io/                      # PDB/mmCIF loading and chain extraction
       ├─ mesh/                    # Surface generation, topology, parameterization
       ├─ optimization/            # OptCuts-based UV optimization
@@ -339,6 +371,13 @@ Symptoms:
 - `which OptCuts_bin` returns empty
 
 Fix:
+
+```bash
+topoppi-install-optcuts
+which OptCuts_bin
+```
+
+From a source checkout, this also works:
 
 ```bash
 bash tools/OptCuts/install_optcuts.sh
@@ -378,8 +417,8 @@ Fix:
 
 ## Changelog
 
-- **v1.0** is the initial public release of TopoPPI.
-- **v1.1** content is being prepared for the next release.
+- **v1.1** adds improved GUI workflows, benchmark reporting, reproducibility manifests, PyPI packaging, and one-command Linux x86-64 OptCuts installation.
+- **v1.0.0** is the initial public release of TopoPPI.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
@@ -389,4 +428,4 @@ See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
 This project is distributed under the terms of the **MIT License**. See [LICENSE](./LICENSE).
 
-The bundled OptCuts binary has its own license. See [`tools/OptCuts/LICENSE.txt`](./tools/OptCuts/LICENSE.txt).
+The source checkout includes a Linux x86-64 OptCuts binary for convenience. It is not included in the Python package distribution; see [`tools/OptCuts/NOTICE.md`](./tools/OptCuts/NOTICE.md) and [`tools/OptCuts/LICENSE.txt`](./tools/OptCuts/LICENSE.txt) before redistributing binary artifacts.

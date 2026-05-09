@@ -1,5 +1,6 @@
 """TopoPPI package."""
 
+from topoppi._version import __version__
 from topoppi.config import (
     BenchmarkConfig,
     OptCutsConfig,
@@ -9,8 +10,6 @@ from topoppi.config import (
     TopoPPIRunConfig,
     VisualizationConfig,
 )
-
-__version__ = "1.0.0"
 
 __all__ = [
     "__version__",

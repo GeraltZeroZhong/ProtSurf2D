@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topoppi"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Protein-protein interaction interface mapping from 3D structures to 2D UV atlases."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -18,51 +18,52 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
   "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
   "numpy>=1.21",
-  "scipy",
-  "biopython",
-  "scikit-image",
-  "matplotlib",
-  "trimesh",
-  "networkx",
-  "pillow",
-  "rtree",
-  "shapely",
+  "scipy>=1.8",
+  "biopython>=1.79",
+  "scikit-image>=0.19",
+  "matplotlib>=3.5",
+  "trimesh>=3.10",
+  "networkx>=2.8",
+  "pillow>=9.0",
+  "rtree>=1.0",
+  "shapely>=1.8",
   "libigl>=2.6,<2.7",
 ]
 
 [project.optional-dependencies]
 benchmark = [
-  "psutil",
-  "tqdm",
+  "psutil>=5.9",
+  "tqdm>=4.60",
 ]
 interactions = [
-  "MDAnalysis",
-  "prolif",
-  "rdkit",
+  "MDAnalysis>=2.0",
+  "prolif>=2.0",
+  "rdkit>=2023.9",
 ]
 meshio = [
-  "meshio",
+  "meshio>=5.0",
 ]
 dev = [
-  "build",
-  "pytest",
-  "pytest-cov",
-  "ruff",
-  "twine",
+  "build>=1.0",
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.4",
+  "twine>=5.0",
 ]
 all = [
-  "psutil",
-  "tqdm",
-  "MDAnalysis",
-  "prolif",
-  "rdkit",
-  "meshio",
+  "psutil>=5.9",
+  "tqdm>=4.60",
+  "MDAnalysis>=2.0",
+  "prolif>=2.0",
+  "rdkit>=2023.9",
+  "meshio>=5.0",
 ]
 
 [project.urls]
@@ -73,9 +74,13 @@ Issues = "https://github.com/GeraltZeroZhong/TopoPPI/issues"
 [project.scripts]
 topoppi = "topoppi.cli:main"
 topoppi-gui = "topoppi.gui:main"
+topoppi-install-optcuts = "topoppi.install_optcuts:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "topoppi._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -94,5 +99,5 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
-ignore = ["E501"]
+select = ["E", "F", "I", "B"]
+ignore = ["E501", "E701"]

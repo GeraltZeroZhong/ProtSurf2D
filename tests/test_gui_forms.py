@@ -5,7 +5,6 @@ import unittest
 from topoppi.errors import ConfigurationError
 from topoppi.gui_app.forms import parse_benchmark_form, parse_single_run_form
 
-
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 TINY_PDB = os.path.join(FIXTURE_DIR, "tiny_complex.pdb")
 

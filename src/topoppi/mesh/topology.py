@@ -1,7 +1,8 @@
+import logging
+
 import numpy as np
 import trimesh
 from scipy.spatial import KDTree
-import logging
 
 from topoppi.config import TopologyConfig
 

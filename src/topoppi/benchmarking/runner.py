@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
 import time
-import hashlib
-from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
+
 try:
     from tqdm.auto import tqdm
 except Exception:  # optional dependency
@@ -22,7 +23,6 @@ try:
 except Exception:  # optional
     psutil = None
 
-from topoppi.config import BenchmarkConfig
 from topoppi import __version__
 from topoppi.benchmarking.metrics_utils import (
     atlas_trainability_metrics,
@@ -33,6 +33,7 @@ from topoppi.benchmarking.metrics_utils import (
     rasterize_feature_maps,
 )
 from topoppi.benchmarking.reporting import aggregate_results, write_csv
+from topoppi.config import BenchmarkConfig
 from topoppi.io.io_loader import PDBLoader
 from topoppi.mesh.parameterization import Parameterizer
 from topoppi.mesh.surface import SurfaceGenerator

@@ -6,10 +6,10 @@ from tkinter import ttk
 
 from topoppi.config import DEFAULT_GUI_CONFIG
 
-from .constants import INTERACTION_COLORS, INTERACTION_TYPES, DEFAULT_ACTIVE_TYPES
+from .constants import DEFAULT_ACTIVE_TYPES, INTERACTION_COLORS, INTERACTION_TYPES
+from .plot_mixin import PlotMixin
 from .ui_mixin import UIMixin
 from .workflow_mixin import WorkflowMixin
-from .plot_mixin import PlotMixin
 
 
 class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):

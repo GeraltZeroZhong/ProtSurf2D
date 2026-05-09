@@ -1,10 +1,10 @@
 import json
 import os
 import threading
+import tkinter as tk
 import uuid
 from datetime import datetime
 from pathlib import Path
-import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, scrolledtext, ttk
 
 from topoppi import __version__

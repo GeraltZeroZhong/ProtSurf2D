@@ -1,6 +1,7 @@
-import numpy as np
 import warnings
-from Bio.PDB import PDBParser, MMCIFParser, Select
+
+import numpy as np
+from Bio.PDB import MMCIFParser, PDBParser, Select
 from Bio.PDB.PDBExceptions import PDBConstructionWarning
 
 # Suppress Biopython warnings about discontinuous chains etc.
@@ -19,7 +20,7 @@ class PDBLoader:
             self.parser = MMCIFParser(QUIET=True)
         else:
             self.parser = PDBParser(QUIET=True)
-        
+
         self.structure = self.parser.get_structure("P", file_path)
         self.model = self.structure[0] # Always take first model
 
@@ -34,21 +35,21 @@ class PDBLoader:
             raise ValueError(f"Chain {chain_id} not found in PDB.")
 
         chain = self.model[chain_id]
-        
+
         # Filter atoms: remove HOH, use only N, CA, C, O, CB etc.
         # We generally keep all heavy atoms for surface generation
         atoms = []
         coords = []
-        
+
         for residue in chain:
             # Skip heteroatoms (water, ions)
             if residue.id[0] != " ":
                 continue
-                
+
             for atom in residue:
                 atoms.append(atom)
                 coords.append(atom.get_coord())
-                
+
         if len(coords) == 0:
             return np.empty((0, 3), dtype=float), atoms
         return np.asarray(coords, dtype=float), atoms
