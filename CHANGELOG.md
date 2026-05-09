@@ -21,6 +21,6 @@ All notable changes to TopoPPI are documented here.
 - Hardened release packaging, PyPI metadata, and OptCuts installation checks.
 - Added the `topoppi-install-optcuts` downloader for Linux x86-64 GitHub release artifacts.
 
-## [1.0] - 2026-05-08
+## [1.0] - 2026-04-06
 
 - Initial public release of TopoPPI.
