@@ -43,6 +43,7 @@ Invoke-External "git" @("-C", $SourceDir, "checkout", "--detach", $OptCutsCommit
 
 $CMakeLists = Join-Path $SourceDir "CMakeLists.txt"
 $MainCpp = Join-Path $SourceDir "src\main.cpp"
+$StbExportHeader = Join-Path $SourceDir "ext\libigl\external\stb_image\igl_stb_image_export.h"
 
 $CMakeText = Get-Content $CMakeLists -Raw
 if ($CMakeText -notmatch "TOPOPPI_WINDOWS_PATCH") {
@@ -55,6 +56,36 @@ if(MSVC)
 endif()
 '@
     Set-Content -Path $CMakeLists -Value $CMakeText -Encoding UTF8
+}
+
+$StbExportText = Get-Content $StbExportHeader -Raw
+if ($StbExportText -notmatch "TOPOPPI_WINDOWS_PATCH") {
+    Set-Content -Path $StbExportHeader -Encoding UTF8 -Value @'
+#ifndef IGL_STB_IMAGE_EXPORT_H
+#define IGL_STB_IMAGE_EXPORT_H
+
+// TOPOPPI_WINDOWS_PATCH: the vendored header uses GCC visibility attributes
+// even when CMake generates a Windows export header. The source include path
+// wins on MSVC, so provide a Windows-safe replacement before configuring.
+#if defined(_WIN32) || defined(__CYGWIN__)
+#  ifdef igl_stb_image_EXPORTS
+#    define IGL_STB_IMAGE_EXPORT __declspec(dllexport)
+#  else
+#    define IGL_STB_IMAGE_EXPORT __declspec(dllimport)
+#  endif
+#  define IGL_STB_IMAGE_NO_EXPORT
+#  define IGL_STB_IMAGE_DEPRECATED __declspec(deprecated)
+#else
+#  define IGL_STB_IMAGE_EXPORT __attribute__((visibility("default")))
+#  define IGL_STB_IMAGE_NO_EXPORT __attribute__((visibility("hidden")))
+#  define IGL_STB_IMAGE_DEPRECATED __attribute__((__deprecated__))
+#endif
+
+#define IGL_STB_IMAGE_DEPRECATED_EXPORT IGL_STB_IMAGE_EXPORT IGL_STB_IMAGE_DEPRECATED
+#define IGL_STB_IMAGE_DEPRECATED_NO_EXPORT IGL_STB_IMAGE_NO_EXPORT IGL_STB_IMAGE_DEPRECATED
+
+#endif /* IGL_STB_IMAGE_EXPORT_H */
+'@
 }
 
 $MainText = Get-Content $MainCpp -Raw
