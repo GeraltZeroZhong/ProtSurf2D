@@ -41,8 +41,9 @@ MPLBACKEND=Agg python -m topoppi.cli tests/fixtures/1bvk.pdb -A A -B C \
 rm -rf dist build src/*.egg-info
 python -m build
 python -m twine check dist/*
-install -m 755 tools/OptCuts/OptCuts_bin dist/OptCuts_bin-linux-x86_64
-sha256sum dist/OptCuts_bin-linux-x86_64
+mkdir -p release-assets
+install -m 755 tools/OptCuts/OptCuts_bin release-assets/OptCuts_bin-linux-x86_64
+sha256sum release-assets/OptCuts_bin-linux-x86_64
 tar -tzf dist/*.tar.gz | grep -E 'tests/fixtures/.*(_cutoff|\.topoppi\.json)' && exit 1 || true
 ```
 
@@ -80,7 +81,8 @@ the package version, and publishes through PyPI Trusted Publishing. It also
 creates or updates the GitHub release and
 attaches `OptCuts_bin-linux-x86_64` plus `OptCuts_bin-linux-x86_64.sha256`.
 If manual upload is ever required, upload exact filenames from a freshly
-cleaned build instead of `dist/*`.
+cleaned `dist/` build and `release-assets/` directory instead of globbing
+both locations together.
 
 ```bash
 python -m twine upload --repository testpypi dist/topoppi-X.Y*
