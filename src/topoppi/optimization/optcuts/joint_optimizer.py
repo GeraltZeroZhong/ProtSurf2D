@@ -37,10 +37,15 @@ def resolve_optcuts_binary(config: OptCutsConfig) -> Optional[str]:
 class OptCutsUVOptimizer:
     """OptCuts-only UV optimizer (no alternating U/S/G loop, no fallback path)."""
 
-    def __init__(self, config: Optional[OptCutsConfig] = None):
+    def __init__(self, config: Optional[OptCutsConfig] = None, cancel_event=None):
         self.config = config or OptCutsConfig()
         self.config.validate()
         self.last_report: Dict[str, object] = {}
+        self.cancel_event = cancel_event
+
+    def _check_cancelled(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise RuntimeError("OptCuts cancelled by user.")
 
     def optimize_patches(self, patches: List[trimesh.Trimesh]) -> List[trimesh.Trimesh]:
         start_ts = time.perf_counter()
@@ -49,6 +54,7 @@ class OptCutsUVOptimizer:
             return patches
 
         for idx, patch in enumerate(patches):
+            self._check_cancelled()
             uv = patch.metadata.get("uv")
             if uv is None:
                 raise RuntimeError(f"Patch {idx} is missing initial UV before OptCuts.")
@@ -57,6 +63,7 @@ class OptCutsUVOptimizer:
 
             t0 = time.perf_counter()
             opt_uv = self._run_optcuts_for_patch(patch, uv, patch_index=idx)
+            self._check_cancelled()
             elapsed_patch = time.perf_counter() - t0
             patch.metadata["uv_optcuts"] = opt_uv
             patch.metadata["uv"] = opt_uv
@@ -184,9 +191,22 @@ class OptCutsUVOptimizer:
                     # is inherited even when running inside an environment with DISPLAY set.
                     proc_env.pop("DISPLAY", None)
                     proc_env.pop("WAYLAND_DISPLAY", None)
-                proc = subprocess.run(cmd, capture_output=True, text=True, cwd=tmpdir, env=proc_env)
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tmpdir, env=proc_env)
+                while True:
+                    try:
+                        _stdout, stderr = proc.communicate(timeout=0.1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if self.cancel_event is not None and self.cancel_event.is_set():
+                            proc.terminate()
+                            try:
+                                proc.communicate(timeout=3)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.communicate(timeout=3)
+                            raise RuntimeError("OptCuts cancelled by user.")
                 if proc.returncode != 0:
-                    raise RuntimeError(f"OptCuts failed (code={proc.returncode}): {proc.stderr.strip()}")
+                    raise RuntimeError(f"OptCuts failed (code={proc.returncode}): {stderr.strip()}")
 
                 out_obj = self._locate_optcuts_output_obj(tmpdir)
                 if not os.path.exists(out_obj):

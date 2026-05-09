@@ -200,6 +200,9 @@ class InterfaceVisualizer:
             'mesh_line_alpha': self.config.mesh_line_alpha,
         }
         if style_config: style.update(style_config)
+        interaction_colors = dict(self.interaction_colors)
+        interaction_colors.update(style.get('interaction_colors') or {})
+        style['interaction_colors'] = interaction_colors
 
         n_patches = len(patches)
         use_uv_atlas = bool(style.get('use_uv_atlas', True))
@@ -238,7 +241,7 @@ class InterfaceVisualizer:
             legend_handles = []
             for t in self.interaction_types:
                 if t in used_interactions:
-                    legend_handles.append(mpatches.Patch(color=self.interaction_colors.get(t, 'gray'), label=t))
+                    legend_handles.append(mpatches.Patch(color=style['interaction_colors'].get(t, 'gray'), label=t))
             fig.legend(handles=legend_handles, loc='upper center', ncol=min(len(legend_handles), 5), frameon=False)
 
         if use_uv_atlas:
@@ -303,7 +306,7 @@ class InterfaceVisualizer:
 
                 if best_type is None:
                     continue
-                final_color = self.interaction_colors.get(best_type, '#FFC0CB')
+                final_color = style['interaction_colors'].get(best_type, '#FFC0CB')
                 found_types.add(best_type)
             else:
                 final_color = style['color']

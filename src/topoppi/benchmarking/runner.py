@@ -46,22 +46,30 @@ class BenchmarkRunner:
         config: BenchmarkConfig,
         log_fn: Optional[Callable[[str], None]] = None,
         progress_fn: Optional[Callable[[int, int, str], None]] = None,
+        cancel_event=None,
     ):
         self.config = config
         self.log = log_fn or (lambda msg: None)
         self.progress = progress_fn or (lambda *_: None)
+        self.cancel_event = cancel_event
         self._proc = psutil.Process(os.getpid()) if psutil else None
         self.config.validate()
         self._checkpoint_path = os.path.join(self.config.output_root, self.config.checkpoint_filename)
         self._checkpoint_fingerprint = self._config_fingerprint()
 
+    def _check_cancelled(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise RuntimeError("Benchmark cancelled by user.")
+
     def run(self) -> Dict[str, object]:
+        self._check_cancelled()
         os.makedirs(self.config.output_root, exist_ok=True)
         pdb_files = sorted([f for f in os.listdir(self.config.input_folder) if f.lower().endswith(".pdb")])
         if not pdb_files:
             raise ValueError("No .pdb files found for benchmark.")
 
         prepared_jobs, preprocessing_log = self._prepare_benchmark_jobs(pdb_files)
+        self._check_cancelled()
         if not prepared_jobs:
             output = self._build_output(
                 preprocessing_log=preprocessing_log,
@@ -81,6 +89,7 @@ class BenchmarkRunner:
             completed_results=completed_results,
             total_jobs=len(completed_results) + len(prepared_jobs),
         )
+        self._check_cancelled()
         all_results = completed_results + new_results
 
         output = self._build_output(
@@ -142,6 +151,7 @@ class BenchmarkRunner:
         with ThreadPoolExecutor(max_workers=worker_count) as executor, progress_ctx as pbar:
             future_to_job = {}
             for idx, job in enumerate(jobs, start=1):
+                self._check_cancelled()
                 pdb_name = str(job["pdb"])
                 pdb_path = os.path.join(self.config.input_folder, pdb_name)
                 chain_a = str(job["chain_a"])
@@ -151,6 +161,7 @@ class BenchmarkRunner:
                 future_to_job[future] = (idx - 1, pdb_name)
 
             for future in as_completed(future_to_job):
+                self._check_cancelled()
                 out_idx, pdb_name = future_to_job[future]
                 completed += 1
                 self._safe_progress(completed, total_jobs, f"Finished {pdb_name}")
@@ -161,6 +172,7 @@ class BenchmarkRunner:
                     all_results[out_idx] = future.result()
                     self.log(f"[Benchmark] Finished {pdb_name}")
                 except Exception as exc:
+                    self._check_cancelled()
                     self.log(f"[Benchmark] Failed {pdb_name}: {exc}")
                     all_results[out_idx] = {
                         "pdb": pdb_name,
@@ -179,6 +191,7 @@ class BenchmarkRunner:
         return max(1, min(int(configured_workers), int(file_count)))
 
     def _run_single(self, pdb_path: str, chain_a: str, chain_b: str) -> Dict[str, object]:
+        self._check_cancelled()
         self._log_thread(f"Start processing {os.path.basename(pdb_path)} ({chain_a}/{chain_b})")
         mem_peak = self._memory_rss_mb()
 
@@ -195,6 +208,7 @@ class BenchmarkRunner:
         patches = topo_mgr.get_interface_patches()
         stage["mesh_and_patch"] = self._stage_stats(t0, c0)
         mem_peak = max(mem_peak, self._memory_rss_mb())
+        self._check_cancelled()
         if not patches:
             return {
                 "pdb": os.path.basename(pdb_path),
@@ -206,6 +220,7 @@ class BenchmarkRunner:
         patch_results = {}
         self._log_thread("Patch parameterization runs sequentially per file; file-level parallelism is handled by worker threads.")
         for method in ("lscm", "harmonic", "spherical", "cylindrical"):
+            self._check_cancelled()
             p, wt, ct, diag = self._parameterize_patches(patches, method=method)
             patch_results[method] = {"patches": p, "wall": wt, "cpu": ct, "diag": diag}
             stage[f"{method}_parameterization"] = self._from_timing_list(wt, ct)
@@ -215,6 +230,7 @@ class BenchmarkRunner:
         lscm_optcuts, optcuts_diag = self._run_optcuts(patch_results["lscm"]["patches"])
         stage["optcuts_optimization"] = self._stage_stats(t0, c0)
         mem_peak = max(mem_peak, self._memory_rss_mb())
+        self._check_cancelled()
 
         t0, c0 = time.perf_counter(), time.process_time()
         atlas_map, patch_coverages = rasterize_feature_maps(lscm_optcuts, size=self.config.raster_size, return_patch_coverage=True)
@@ -306,6 +322,7 @@ class BenchmarkRunner:
         skipped_files: List[Dict[str, str]] = []
 
         for pdb_name in pdb_files:
+            self._check_cancelled()
             pdb_path = os.path.join(self.config.input_folder, pdb_name)
             try:
                 loader = PDBLoader(pdb_path)
@@ -424,6 +441,7 @@ class BenchmarkRunner:
             "area_retention_ratios": [],
         }
         for p in patches:
+            self._check_cancelled()
             diag["attempted"] += 1
             patch_copy = p.copy()
             if method == "lscm" and self._is_patch_too_small_for_lscm(patch_copy):
@@ -461,11 +479,12 @@ class BenchmarkRunner:
     def _run_optcuts(self, patches):
         if not patches:
             return [], {"enabled": False, "status": "skipped_no_lscm_patches", "error_count": 0, "errors": []}
-        optimizer = OptCutsUVOptimizer(self.config.optcuts)
+        optimizer = OptCutsUVOptimizer(self.config.optcuts, cancel_event=self.cancel_event)
         try:
             optimized = optimizer.optimize_patches([p.copy() for p in patches])
             return optimized, {"enabled": True, "status": "ok", "error_count": 0, "errors": []}
         except Exception as exc:
+            self._check_cancelled()
             msg = f"OptCuts error: {exc}"
             self.log(f"[Benchmark] {msg}")
             return [p.copy() for p in patches], {"enabled": False, "status": "failed", "error_count": 1, "errors": [msg]}

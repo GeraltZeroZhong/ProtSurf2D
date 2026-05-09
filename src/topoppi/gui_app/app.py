@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from topoppi.config import DEFAULT_GUI_CONFIG
 
-from .constants import INTERACTION_TYPES, DEFAULT_ACTIVE_TYPES
+from .constants import INTERACTION_COLORS, INTERACTION_TYPES, DEFAULT_ACTIVE_TYPES
 from .ui_mixin import UIMixin
 from .workflow_mixin import WorkflowMixin
 from .plot_mixin import PlotMixin
@@ -24,6 +24,7 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
         self._ui_queue = queue.Queue()
         self._busy = False
         self._closed = False
+        self._cancel_event = threading.Event()
 
         self.cached_viz = None
         self.cached_patches = None
@@ -36,10 +37,15 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
         self.last_run_params = {}
         self.log_history = []
         self.current_run_log = []
+        self.chain_residue_counts = {}
+        self.recent_files = []
+        self.recent_output_dirs = []
 
         self.interaction_types_list = list(INTERACTION_TYPES)
         self.default_active = set(DEFAULT_ACTIVE_TYPES)
         self.interaction_vars = {}
+        self.interaction_colors = dict(INTERACTION_COLORS)
+        self.interaction_color_swatches = {}
 
         self._configure_style()
         self.paned_window = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
@@ -83,9 +89,12 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
             font=(font_family, self.config.header_font_size, "bold"),
         )
         style.configure("Muted.TLabel", background="#f5f7fb", foreground="#6b7280")
+        style.configure("Error.TLabel", background="#f5f7fb", foreground="#b91c1c")
         style.configure("TLabelframe", background="#f5f7fb", borderwidth=1, relief="solid")
         style.configure("TLabelframe.Label", background="#f5f7fb", foreground="#111827")
         style.configure("TButton", padding=(8, 5))
+        style.configure("Invalid.TEntry", fieldbackground="#fff1f2")
+        style.configure("Invalid.TCombobox", fieldbackground="#fff1f2")
         style.configure(
             "Primary.TButton",
             padding=(12, 7),
