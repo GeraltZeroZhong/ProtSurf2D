@@ -44,6 +44,7 @@ Invoke-External "git" @("-C", $SourceDir, "checkout", "--detach", $OptCutsCommit
 $CMakeLists = Join-Path $SourceDir "CMakeLists.txt"
 $MainCpp = Join-Path $SourceDir "src\main.cpp"
 $StbExportHeader = Join-Path $SourceDir "ext\libigl\external\stb_image\igl_stb_image_export.h"
+$SortableRowHeader = Join-Path $SourceDir "ext\libigl\include\igl\SortableRow.h"
 
 $CMakeText = Get-Content $CMakeLists -Raw
 if ($CMakeText -notmatch "TOPOPPI_WINDOWS_PATCH") {
@@ -88,13 +89,23 @@ if ($StbExportText -notmatch "TOPOPPI_WINDOWS_PATCH") {
 '@
 }
 
-$MainText = Get-Content $MainCpp -Raw
-if ($MainText -match "__DBL_MAX__") {
-    $MainText = $MainText -replace "__DBL_MAX__", "DBL_MAX"
-    if ($MainText -notmatch "#include <cfloat>") {
-        $MainText = $MainText -replace "#include <ctime>", "#include <ctime>`r`n#include <cfloat>"
+$DoubleMaxLiteral = "1.7976931348623158e+308"
+Get-ChildItem -Path (Join-Path $SourceDir "src") -Recurse -Include "*.cpp", "*.hpp", "*.h" | ForEach-Object {
+    $SourceText = Get-Content $_.FullName -Raw
+    if ($SourceText -match "__DBL_MAX__") {
+        $SourceText = $SourceText -replace "__DBL_MAX__", $DoubleMaxLiteral
+        Set-Content -Path $_.FullName -Value $SourceText -Encoding UTF8
     }
 }
+
+$SortableRowText = Get-Content $SortableRowHeader -Raw
+if ($SortableRowText -notmatch "TOPOPPI_WINDOWS_SORTABLE_ROW_PATCH") {
+    $SortableRowText = $SortableRowText -replace "const SortableRow<T> & THIS = \*this;", "const SortableRow<T> & self = *this; // TOPOPPI_WINDOWS_SORTABLE_ROW_PATCH"
+    $SortableRowText = $SortableRowText -replace "\bTHIS\.", "self."
+    Set-Content -Path $SortableRowHeader -Value $SortableRowText -Encoding UTF8
+}
+
+$MainText = Get-Content $MainCpp -Raw
 if ($MainText -notmatch "TOPOPPI_WINDOWS_PATCH") {
     $MainText = $MainText -replace "#include <sys/stat.h> // for mkdir", @"
 #include <sys/stat.h> // for mkdir
