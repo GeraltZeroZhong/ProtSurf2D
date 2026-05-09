@@ -46,14 +46,14 @@ $MainCpp = Join-Path $SourceDir "src\main.cpp"
 
 $CMakeText = Get-Content $CMakeLists -Raw
 if ($CMakeText -notmatch "TOPOPPI_WINDOWS_PATCH") {
-    $CMakeText += @"
+    $CMakeText += @'
 
 # TOPOPPI_WINDOWS_PATCH: build the release artifact on GitHub Actions Windows runners.
 if(MSVC)
   target_compile_definitions(${PROJECT_NAME}_bin PRIVATE _USE_MATH_DEFINES NOMINMAX)
   target_compile_options(${PROJECT_NAME}_bin PRIVATE /bigobj /permissive-)
 endif()
-"@
+'@
     Set-Content -Path $CMakeLists -Value $CMakeText -Encoding UTF8
 }
 
