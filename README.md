@@ -1,16 +1,17 @@
 # TopoPPI
 
-TopoPPI is a user-friendly Python toolkit for mapping **protein–protein interaction (PPI) interfaces** from 3D structures into 2D UV atlases. See the [Quick Start](#quick-start-gui-5-minutes) to get running in minutes.
+TopoPPI maps **protein-protein interaction (PPI) interfaces** from 3D structures into annotated 2D UV atlases. It is built for interactive inspection, reproducible figure export, and benchmark-style evaluation across structure sets.
 
-The project provides:
+The toolkit includes:
 
+- a **Basic/Advanced Tkinter GUI** for single-structure analysis, interaction styling, benchmark launching, and reproducible export,
 - a **command-line pipeline** for one-shot interface map generation,
-- a **Tkinter GUI** for interactive analysis, benchmark launching, and reproducible figure export,
-- and a **benchmark framework** for multi-structure evaluation and reproducible reporting.
+- a **benchmark framework** for multi-structure evaluation with JSON/CSV reports,
+- optional typed interaction annotation through ProLIF, with geometric fallback when no ProLIF data is available.
 
-The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a ligand chain, flattens patches to UV space, optimizes UVs with [**OptCuts**](https://github.com/liminchen/OptCuts), and renders annotated interface maps (using ProLIF interactions).
+The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a partner chain, flattens patches to UV space, optimizes UVs with [**OptCuts**](https://github.com/liminchen/OptCuts), and renders annotated interface maps.
 
-<img width="1920" height="1007" alt="GUI" src="https://github.com/user-attachments/assets/cbf18521-63be-4b93-886e-526564744b1d" />
+<img width="1920" height="1032" alt="TopoPPI GUI showing the Basic workflow and interface map" src="./docs/assets/3ff22687bd403a67cd66caeacc95baee.png" />
 
 ---
 
@@ -45,8 +46,9 @@ topoppi-gui
 ```
 
 5. In the GUI:
-   - Keep **Single analysis** selected and load a `.pdb`/`.cif` structure file,
-   - Set Chain A (receptor) and Chain B (ligand),
+   - Use **Basic** to load a `.pdb`/`.cif` structure file,
+   - Review detected chains and use **Swap A/B** if the surface/partner assignment is reversed,
+   - Choose which interaction types to display and adjust colors if needed,
    - Click **Run Single Analysis** to generate and auto-save the interface map.
 
 > Note: [OptCuts](https://github.com/liminchen/OptCuts) is required by the current pipeline. Running without OptCuts is intentionally unsupported.
@@ -82,7 +84,7 @@ All user-facing defaults live in `topoppi.config`.
 - Python **3.10** (recommended via Conda)
 - OS with Tk support (for GUI mode)
 - **libigl Python bindings 2.6.x** (package: `igl`)
-- **ProLIF + MDAnalysis must be installed** (interaction parsing/annotation)
+- **ProLIF + MDAnalysis are recommended** for automatic typed interaction generation; the GUI can leave ProLIF blank and fall back to geometric heuristics if generation is unavailable
 - **OptCuts binary (`OptCuts_bin`) must be installed** and available in your PATH (or passed via `--optcuts-bin`)
 
 ### Create environment
@@ -137,9 +139,13 @@ topoppi-gui
 
 GUI supports:
 
-- single-file analysis,
+- Basic single-file analysis with structure loading, chain preview, A/B swapping, interaction filters, and color controls,
+- Advanced controls for chain IDs, cutoffs, surface parameters, OptCuts export, labels, layout, and output directories,
 - folder-level benchmark runs with explicit `resume`, `new`, and `overwrite` modes,
-- interaction-type filtering and styling,
+- interaction-type filtering, custom colors, and style presets (`Exploration`, `Publication`, `High contrast`),
+- recent input/output path pickers,
+- inline validation before launching a run,
+- staged progress (`Load`, `Surface`, `Patch`, `OptCuts`, `Render`) and cooperative cancellation,
 - optional OptCuts frame export,
 - auto-saved figures and sidecar manifests for reproducibility.
 
@@ -214,7 +220,7 @@ CLI defaults are read from `topoppi.config.DEFAULT_RUN_CONFIG`.
 
 ### ProLIF behavior
 
-If `--prolif` is not provided (or file is missing), the pipeline auto-generates `<input_basename>.<chain_a>-<chain_b>.prolif.json` using MDAnalysis + ProLIF.
+If `--prolif` is not provided (or the GUI ProLIF field is left blank), TopoPPI tries to auto-generate `<input_basename>.<chain_a>-<chain_b>.prolif.json` using MDAnalysis + ProLIF. If generation is unavailable or fails, visualization falls back to geometric interaction heuristics.
 
 ---
 
