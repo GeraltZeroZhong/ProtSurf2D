@@ -1,13 +1,15 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import matplotlib.patheffects as patheffects
-from matplotlib.collections import PolyCollection
-from scipy.spatial import KDTree
+import json
 import logging
 import os
 import re
-import json
+
+import matplotlib.patches as mpatches
+import matplotlib.patheffects as patheffects
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.collections import PolyCollection
+from scipy.spatial import KDTree
+
 from topoppi.config import VisualizationConfig
 from topoppi.interactions.interaction_engine import load_prolif_data
 from topoppi.interactions.metadata import INTERACTION_COLORS, INTERACTION_TYPES

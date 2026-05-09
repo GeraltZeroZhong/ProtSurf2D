@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+
 def main() -> int:
     import tkinter as tk
 
-    from topoppi.config import DEFAULT_GUI_CONFIG
     import matplotlib
+
+    from topoppi.config import DEFAULT_GUI_CONFIG
 
     matplotlib.use("TkAgg", force=True)
 

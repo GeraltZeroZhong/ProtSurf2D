@@ -1,8 +1,9 @@
-import numpy as np
-import igl
-import trimesh
-import logging
 import importlib.metadata
+import logging
+
+import igl
+import numpy as np
+import trimesh
 
 from topoppi.config import ParameterizationConfig
 
@@ -342,9 +343,9 @@ class Parameterizer:
         vertices,
         faces,
         area_faces,
-        min_area=ParameterizationConfig().min_face_area,
-        min_angle_deg=ParameterizationConfig().min_angle_deg,
-        max_aspect_ratio=ParameterizationConfig().max_aspect_ratio,
+        min_area=None,
+        min_angle_deg=None,
+        max_aspect_ratio=None,
     ):
         """
         Build a robust per-face validity mask using:
@@ -352,6 +353,12 @@ class Parameterizer:
         2) minimal angle threshold
         3) maximal edge aspect-ratio threshold
         """
+        if min_area is None or min_angle_deg is None or max_aspect_ratio is None:
+            defaults = ParameterizationConfig()
+            min_area = defaults.min_face_area if min_area is None else min_area
+            min_angle_deg = defaults.min_angle_deg if min_angle_deg is None else min_angle_deg
+            max_aspect_ratio = defaults.max_aspect_ratio if max_aspect_ratio is None else max_aspect_ratio
+
         if len(faces) == 0:
             return np.array([], dtype=bool)
 

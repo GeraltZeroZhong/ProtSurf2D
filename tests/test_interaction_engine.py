@@ -3,7 +3,6 @@ from pathlib import Path
 
 from topoppi.interactions.interaction_engine import load_prolif_data
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

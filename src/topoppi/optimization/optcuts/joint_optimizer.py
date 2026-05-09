@@ -28,10 +28,14 @@ def resolve_optcuts_binary(config: OptCutsConfig) -> Optional[str]:
     """Resolve the executable path for OptCuts from env/config/PATH."""
 
     bin_path = os.environ.get(config.optcuts_env_var, config.optcuts_bin)
-    resolved_bin = shutil.which(bin_path) if not os.path.isabs(bin_path) else bin_path
+    if os.path.isabs(bin_path):
+        resolved_bin = bin_path
+    else:
+        local_bin = os.path.abspath(bin_path)
+        resolved_bin = local_bin if os.path.exists(local_bin) else shutil.which(bin_path)
     if not resolved_bin or not os.path.exists(resolved_bin):
         return None
-    return resolved_bin
+    return os.path.abspath(resolved_bin)
 
 
 class OptCutsUVOptimizer:
@@ -204,7 +208,7 @@ class OptCutsUVOptimizer:
                             except subprocess.TimeoutExpired:
                                 proc.kill()
                                 proc.communicate(timeout=3)
-                            raise RuntimeError("OptCuts cancelled by user.")
+                            raise RuntimeError("OptCuts cancelled by user.") from None
                 if proc.returncode != 0:
                     raise RuntimeError(f"OptCuts failed (code={proc.returncode}): {stderr.strip()}")
 

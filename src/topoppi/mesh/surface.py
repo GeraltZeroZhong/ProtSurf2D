@@ -1,9 +1,10 @@
+import logging
+
 import numpy as np
 import trimesh
 import trimesh.smoothing
+from scipy.ndimage import binary_closing, gaussian_filter
 from skimage import measure
-from scipy.ndimage import gaussian_filter, binary_closing
-import logging
 
 from topoppi.config import SurfaceConfig
 
@@ -11,10 +12,10 @@ logger = logging.getLogger("Surface")
 
 class SurfaceGenerator:
     """
-    Generates a smooth Solvent-Excluded Surface (SES) approximation 
+    Generates a smooth Solvent-Excluded Surface (SES) approximation
     from atomic coordinates using Gaussian Density Fields.
     """
-    
+
     def __init__(self, coords: np.ndarray, config: SurfaceConfig | None = None):
         """
         Args:
@@ -53,7 +54,7 @@ class SurfaceGenerator:
         padding = config.padding
         min_bound = self.coords.min(axis=0) - padding
         max_bound = self.coords.max(axis=0) + padding
-        
+
         # Calculate grid shape
         shape = np.ceil((max_bound - min_bound) / grid_resolution).astype(int)
         if np.any(shape <= 0):
@@ -70,14 +71,14 @@ class SurfaceGenerator:
 
         # 2. Fast Voxelization
         grid, edges = np.histogramdd(
-            self.coords, 
-            bins=shape, 
+            self.coords,
+            bins=shape,
             range=[(min_bound[i], max_bound[i]) for i in range(3)]
         )
-        
+
         # 3. Compute Density Field
         density_field = gaussian_filter(grid.astype(float), sigma=sigma)
-        
+
         max_density = density_field.max()
         if max_density == 0:
             logger.error("Density field is empty (all zeros). Check coordinates.")
@@ -109,37 +110,37 @@ class SurfaceGenerator:
         # --- Iterative Level Adjustment (Smart Retry) ---
         # Fix for 1AHW issue: If max_density is driven by outliers (e.g. clashing atoms),
         # the default level (0.1) might be too high for the rest of the surface.
-        
+
         current_level = level
         # Safety: Ensure we start below the max
         if current_level >= max_density:
             current_level = max_density * config.retry_level_factor
 
         final_mesh = None
-        
+
         # Heuristic: Expect at least 0.5 vertices per atom for a decent coarse surface
-        min_expected_verts = min(config.min_expected_vertices_cap, num_atoms * config.min_vertices_per_atom) 
+        min_expected_verts = min(config.min_expected_vertices_cap, num_atoms * config.min_vertices_per_atom)
 
         for attempt in range(config.retry_attempts):
             try:
                 verts, faces, normals, values = measure.marching_cubes(
-                    density_field, 
+                    density_field,
                     level=current_level,
                     step_size=1
                 )
-                
+
                 n_verts = len(verts)
                 # Check if surface is suspiciously small
                 if n_verts < min_expected_verts and attempt < config.retry_attempts - 1:
                     logger.warning(f"Surface too small ({n_verts} verts) at level {current_level:.4f}. Reducing threshold...")
                     current_level *= config.retry_level_factor
-                    continue 
-                
+                    continue
+
                 # If acceptable size or last attempt
                 real_verts = min_bound + verts * grid_resolution
                 final_mesh = trimesh.Trimesh(vertices=real_verts, faces=faces, vertex_normals=normals)
                 break
-                
+
             except ValueError as e:
                 logger.warning(f"Marching Cubes failed at level {current_level}: {e}")
                 current_level *= config.retry_level_factor
@@ -157,7 +158,7 @@ class SurfaceGenerator:
                 trimesh.smoothing.filter_laplacian(final_mesh, iterations=config.smoothing_iterations)
         except Exception as e:
             logger.warning(f"Mesh smoothing skipped: {e}")
-        
+
         logger.info(f"Surface generated: {len(final_mesh.vertices)} verts, {len(final_mesh.faces)} faces.")
         return final_mesh
 

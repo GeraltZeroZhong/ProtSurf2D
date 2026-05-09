@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -22,16 +25,37 @@ jobs:
 
       - name: Run tests
         shell: bash -el {0}
-        run: python -m unittest discover -s tests
+        run: python -m pytest
+
+      - name: Lint
+        shell: bash -el {0}
+        run: python -m ruff check .
 
       - name: Import and CLI smoke
         shell: bash -el {0}
         run: |
           python -c "import topoppi; print(topoppi.__version__)"
           python -m topoppi.cli --help
+          python -m topoppi.install_optcuts --help
+
+      - name: Full pipeline smoke
+        shell: bash -el {0}
+        env:
+          MPLBACKEND: Agg
+        run: |
+          python -m topoppi.cli tests/fixtures/1bvk.pdb -A A -B C \
+            --prolif tests/fixtures/prolif_interactions.json \
+            --optcuts-bin tools/OptCuts/OptCuts_bin \
+            -o /tmp/topoppi-ci-interface.png
+          test -s /tmp/topoppi-ci-interface.png
 
       - name: Build package
         shell: bash -el {0}
         run: |
+          rm -rf dist build src/*.egg-info
           python -m build
-          twine check dist/*
+          python -m twine check dist/*
+          if tar -tzf dist/*.tar.gz | grep -E 'tests/fixtures/.*(_cutoff|\.topoppi\.json)'; then
+            echo "Generated fixture output leaked into sdist." >&2
+            exit 1
+          fi

@@ -1,11 +1,10 @@
-import os
-import threading
-import logging
 import hashlib
+import logging
+import os
 import platform
-import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, replace
 from datetime import datetime
@@ -13,19 +12,18 @@ from importlib import metadata
 from pathlib import Path
 from tkinter import messagebox
 
-from topoppi.config import BenchmarkConfig, DEFAULT_RUN_CONFIG
+from topoppi.benchmarking import BenchmarkRunner
+from topoppi.config import DEFAULT_RUN_CONFIG, BenchmarkConfig
 from topoppi.errors import ConfigurationError
+from topoppi.interactions.interaction_engine import generate_prolif_interactions
 from topoppi.io.io_loader import PDBLoader
+from topoppi.mesh.parameterization import Parameterizer
 from topoppi.mesh.surface import SurfaceGenerator
 from topoppi.mesh.topology import TopologyManager
-from topoppi.mesh.parameterization import Parameterizer
-from topoppi.optimization.optcuts import OptCutsUVOptimizer
+from topoppi.optimization.optcuts import OptCutsUVOptimizer, resolve_optcuts_binary
 from topoppi.visualization.visualizer import InterfaceVisualizer
-from topoppi.interactions.interaction_engine import generate_prolif_interactions
-from topoppi.benchmarking import BenchmarkRunner
-from topoppi.optimization.optcuts import resolve_optcuts_binary
-from .forms import parse_benchmark_form
 
+from .forms import parse_benchmark_form
 
 logger = logging.getLogger("topoppi.gui")
 

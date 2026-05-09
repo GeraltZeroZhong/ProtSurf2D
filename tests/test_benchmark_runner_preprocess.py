@@ -7,7 +7,6 @@ import unittest
 from topoppi.benchmarking import BenchmarkRunner
 from topoppi.config import BenchmarkConfig
 
-
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 TINY_PDB = os.path.join(FIXTURE_DIR, "tiny_complex.pdb")
 

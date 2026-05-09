@@ -6,8 +6,8 @@ without a display server.
 
 from __future__ import annotations
 
-import os
 import math
+import os
 from dataclasses import dataclass
 from typing import Mapping
 

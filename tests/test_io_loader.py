@@ -3,7 +3,6 @@ from pathlib import Path
 
 from topoppi.io.io_loader import PDBLoader
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

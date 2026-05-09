@@ -5,3 +5,5 @@ from topoppi.interactions.metadata import (
 )
 
 DEFAULT_ACTIVE_TYPES = set(DEFAULT_ACTIVE_INTERACTION_TYPES)
+
+__all__ = ["DEFAULT_ACTIVE_TYPES", "INTERACTION_COLORS", "INTERACTION_TYPES"]
