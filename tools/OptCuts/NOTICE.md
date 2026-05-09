@@ -7,9 +7,15 @@ source checkout users who run the current TopoPPI pipeline.
 - Upstream commit checked during release audit: `cd2302671af7954f263b0ea93d8419aa943d54be`
 - Binary format: ELF 64-bit LSB pie executable, x86-64, dynamically linked
 - GitHub release artifact name: `OptCuts_bin-linux-x86_64`
-- SHA256: `8f973b20dbf0db83409317dd267f6b674cfa9e9173fb77c260af70104e01426d`
+- Optional Windows release artifact name: `OptCuts_bin-windows-x86_64.exe`
+- Linux SHA256: `8f973b20dbf0db83409317dd267f6b674cfa9e9173fb77c260af70104e01426d`
 - Python package policy: `tools/OptCuts/OptCuts_bin` is excluded from TopoPPI
   sdist and wheel distributions.
+
+Windows artifacts are not stored in this source checkout. The `Windows Installer`
+workflow builds `OptCuts_bin-windows-x86_64.exe` from the upstream OptCuts
+commit, embeds it in `TopoPPI-<version>-windows-x86_64-setup.exe`, and attaches
+both the standalone executable and `.sha256` sidecar to the same GitHub release.
 
 The upstream repository ships `LICENSE.txt` with MIT License text but no
 copyright notice line. The local `LICENSE.txt` is copied from that upstream

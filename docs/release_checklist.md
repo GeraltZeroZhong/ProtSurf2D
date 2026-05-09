@@ -13,6 +13,7 @@ Use this checklist for GitHub releases and PyPI/TestPyPI publication.
 - Confirm the release target is Python 3.10, matching `requires-python`, classifiers, `environment.yml`, and CI.
 - Confirm the PyPI project has GitHub Trusted Publishing configured for the `pypi` environment.
 - Confirm `tools/OptCuts/NOTICE.md` describes the exact binary source, license, platform, and release artifact policy.
+- For Windows one-click releases, confirm the `Windows Installer` workflow builds `OptCuts_bin-windows-x86_64.exe`, embeds it in the setup executable, and attaches the standalone `.exe` plus `.sha256` sidecar to the same GitHub release.
 - Check for accidental secrets and large files:
 
 ```bash
@@ -44,7 +45,23 @@ python -m twine check dist/*
 mkdir -p release-assets
 install -m 755 tools/OptCuts/OptCuts_bin release-assets/OptCuts_bin-linux-x86_64
 sha256sum release-assets/OptCuts_bin-linux-x86_64
-tar -tzf dist/*.tar.gz | grep -E 'tests/fixtures/.*(_cutoff|\.topoppi\.json)' && exit 1 || true
+tar -tzf dist/*.tar.gz | grep -E 'tools/OptCuts/OptCuts_bin|tests/fixtures/.*(_cutoff|\.topoppi\.json)' && exit 1 || true
+```
+
+For Windows installer validation, run the `Windows Installer` workflow. It
+builds the Windows OptCuts executable, embeds it in the setup executable, and
+uploads both the setup and standalone OptCuts artifacts. To build locally on
+Windows, first run `tools\OptCuts\build_windows_optcuts.ps1` and then run Inno
+Setup:
+
+```powershell
+.\tools\OptCuts\build_windows_optcuts.ps1 -OutputDir installer\windows
+Push-Location installer\windows
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+  /DMyAppVersion=X.Y `
+  /DMyPackageSpec=https://github.com/GeraltZeroZhong/TopoPPI/archive/refs/tags/vX.Y.zip `
+  TopoPPI.iss
+Pop-Location
 ```
 
 In a fresh environment, install the built wheel and run:
@@ -79,7 +96,11 @@ git push origin vX.Y
 The `Publish` workflow runs only from version tags, verifies the tag matches
 the package version, and publishes through PyPI Trusted Publishing. It also
 creates or updates the GitHub release and
-attaches `OptCuts_bin-linux-x86_64` plus `OptCuts_bin-linux-x86_64.sha256`.
+attaches `OptCuts_bin-linux-x86_64`, checksum sidecars, and any optional
+`OptCuts_bin-windows-x86_64.exe` binary present under `tools/OptCuts`.
+The separate `Windows Installer` workflow builds and attaches
+`TopoPPI-X.Y-windows-x86_64-setup.exe`, its `.sha256` sidecar, and standalone
+Windows OptCuts artifacts.
 If manual upload is ever required, upload exact filenames from a freshly
 cleaned `dist/` build and `release-assets/` directory instead of globbing
 both locations together.
@@ -98,8 +119,12 @@ After PyPI upload and GitHub release creation:
 ## Binary Policy
 
 The bundled `tools/OptCuts/OptCuts_bin` is not included in the Python package distribution.
-The release artifact name expected by `topoppi-install-optcuts` is `OptCuts_bin-linux-x86_64`.
-The expected SHA256 is:
+Release artifact names expected by `topoppi-install-optcuts` are:
+
+- `OptCuts_bin-linux-x86_64`
+- `OptCuts_bin-windows-x86_64.exe`
+
+The expected Linux SHA256 is:
 
 ```text
 8f973b20dbf0db83409317dd267f6b674cfa9e9173fb77c260af70104e01426d
@@ -107,3 +132,4 @@ The expected SHA256 is:
 
 Document platform support, binary provenance, and licensing separately for any GitHub release artifact.
 Do not attach OptCuts binary artifacts unless `tools/OptCuts/NOTICE.md` and `src/topoppi/install_optcuts.py` are current.
+For Windows artifacts, attach a matching `OptCuts_bin-windows-x86_64.exe.sha256` sidecar; the setup executable embeds the Windows binary, and `topoppi-install-optcuts` can also use the standalone sidecar when installing from a release.

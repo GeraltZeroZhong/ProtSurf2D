@@ -4,6 +4,13 @@ All notable changes to TopoPPI are documented here.
 
 ## [Unreleased]
 
+## [1.2] - 2026-05-09
+
+- Added Windows x86-64 bootstrap installer scaffolding for one-click TopoPPI installation.
+- Added Windows-aware OptCuts artifact resolution in `topoppi-install-optcuts`.
+- Added release workflow support for optional Windows OptCuts artifacts and Windows setup executables.
+- Documented Windows installer requirements, release artifacts, and troubleshooting paths.
+
 ## [1.1] - 2026-05-09
 
 - Improved GUI mode switching, sticky run controls, styling, run logs, validation, figure auto-save, manifests, and Matplotlib navigation.
