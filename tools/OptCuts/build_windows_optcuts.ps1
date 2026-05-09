@@ -43,6 +43,7 @@ Invoke-External "git" @("-C", $SourceDir, "checkout", "--detach", $OptCutsCommit
 
 $CMakeLists = Join-Path $SourceDir "CMakeLists.txt"
 $MainCpp = Join-Path $SourceDir "src\main.cpp"
+$OptimizerCpp = Join-Path $SourceDir "src\Optimizer.cpp"
 $StbExportHeader = Join-Path $SourceDir "ext\libigl\external\stb_image\igl_stb_image_export.h"
 $SortableRowHeader = Join-Path $SourceDir "ext\libigl\include\igl\SortableRow.h"
 
@@ -103,6 +104,13 @@ if ($SortableRowText -notmatch "TOPOPPI_WINDOWS_SORTABLE_ROW_PATCH") {
     $SortableRowText = $SortableRowText -replace "const SortableRow<T> & THIS = \*this;", "const SortableRow<T> & self = *this; // TOPOPPI_WINDOWS_SORTABLE_ROW_PATCH"
     $SortableRowText = $SortableRowText -replace "\bTHIS\.", "self."
     Set-Content -Path $SortableRowHeader -Value $SortableRowText -Encoding UTF8
+}
+
+$OptimizerText = Get-Content $OptimizerCpp -Raw
+if ($OptimizerText -notmatch "TOPOPPI_WINDOWS_OPTIMIZER_EXTERN_PATCH") {
+    $OptimizerText = $OptimizerText -replace "extern const std::string outputFolderPath;", "extern std::string outputFolderPath; // TOPOPPI_WINDOWS_OPTIMIZER_EXTERN_PATCH"
+    $OptimizerText = $OptimizerText -replace "extern const bool fractureMode;", "extern bool fractureMode;"
+    Set-Content -Path $OptimizerCpp -Value $OptimizerText -Encoding UTF8
 }
 
 $MainText = Get-Content $MainCpp -Raw
