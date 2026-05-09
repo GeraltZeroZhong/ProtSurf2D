@@ -89,6 +89,12 @@ if ($StbExportText -notmatch "TOPOPPI_WINDOWS_PATCH") {
 }
 
 $MainText = Get-Content $MainCpp -Raw
+if ($MainText -match "__DBL_MAX__") {
+    $MainText = $MainText -replace "__DBL_MAX__", "DBL_MAX"
+    if ($MainText -notmatch "#include <cfloat>") {
+        $MainText = $MainText -replace "#include <ctime>", "#include <ctime>`r`n#include <cfloat>"
+    }
+}
 if ($MainText -notmatch "TOPOPPI_WINDOWS_PATCH") {
     $MainText = $MainText -replace "#include <sys/stat.h> // for mkdir", @"
 #include <sys/stat.h> // for mkdir
