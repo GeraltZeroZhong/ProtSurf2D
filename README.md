@@ -33,6 +33,8 @@ TopoPPI-1.2-windows-x86_64-setup.exe
 
 Download it, keep your internet connection on, double-click it, and finish the installer. It installs TopoPPI, Python, the required scientific packages, and the bundled Windows OptCuts executable into `%LOCALAPPDATA%\TopoPPI`; no separate Conda, Python, or OptCuts setup is needed. If Windows SmartScreen warns that the unsigned installer is from an unknown publisher, continue only if the file came from the official GitHub release.
 
+The installation process usually takes about five minutes. PowerShell windows may briefly flash during setup; this is normal, so please wait patiently. The first TopoPPI launch may also take about one minute.
+
 After installation, open **TopoPPI GUI** from the Windows Start Menu.
 
 ### Linux x86-64
