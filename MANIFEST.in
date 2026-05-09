@@ -19,6 +19,7 @@ recursive-exclude dist *
 recursive-exclude build *
 recursive-exclude *.egg-info *
 recursive-exclude tools/OptCuts OptCuts_bin*
+recursive-exclude tools/OptCuts libigl_stb_image*
 recursive-exclude tests/fixtures *_cutoff*_res*_sigma*_min*_*.png
 recursive-exclude tests/fixtures *_cutoff*_res*_sigma*_min*_*.topoppi.json
 global-exclude __pycache__

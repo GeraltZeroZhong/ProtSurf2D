@@ -8,6 +8,7 @@ All notable changes to TopoPPI are documented here.
 
 - Added Windows x86-64 bootstrap installer scaffolding for one-click TopoPPI installation.
 - Added Windows-aware OptCuts artifact resolution in `topoppi-install-optcuts`.
+- Added Linux OptCuts runtime sidecar installation for `libigl_stb_image.so`.
 - Added release workflow support for optional Windows OptCuts artifacts and Windows setup executables.
 - Documented Windows installer requirements, release artifacts, and troubleshooting paths.
 

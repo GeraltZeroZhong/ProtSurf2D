@@ -18,13 +18,21 @@ from typing import Sequence
 
 from topoppi._version import __version__
 
-LINUX_X86_64_SHA256 = "8f973b20dbf0db83409317dd267f6b674cfa9e9173fb77c260af70104e01426d"
+LINUX_X86_64_SHA256 = "0395b2b34f359b59a230e4833e320a55f81d12d90404f1c72b30c3eb8aef3e9f"
+LINUX_X86_64_STB_IMAGE_SHA256 = "996a27b49b5b42b5c97554898ab3e943baa4c08969df89f7c4f6e54dabbbf65f"
 DEFAULT_PLATFORM_KEY = "linux-x86_64"
 RELEASE_URL_TEMPLATE = "https://github.com/GeraltZeroZhong/TopoPPI/releases/download/v{version}/{artifact}"
 
 
 class InstallError(RuntimeError):
     """Raised when OptCuts installation cannot be completed."""
+
+
+@dataclass(frozen=True)
+class SidecarArtifact:
+    artifact_name: str
+    target_name: str
+    sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +43,7 @@ class PlatformArtifact:
     systems: tuple[str, ...]
     machines: tuple[str, ...]
     sha256: str | None = None
+    sidecars: tuple[SidecarArtifact, ...] = ()
 
 
 PLATFORM_ARTIFACTS = {
@@ -45,6 +54,13 @@ PLATFORM_ARTIFACTS = {
         systems=("linux",),
         machines=("x86_64",),
         sha256=LINUX_X86_64_SHA256,
+        sidecars=(
+            SidecarArtifact(
+                artifact_name="libigl_stb_image-linux-x86_64.so",
+                target_name="libigl_stb_image.so",
+                sha256=LINUX_X86_64_STB_IMAGE_SHA256,
+            ),
+        ),
     ),
     "windows-x86_64": PlatformArtifact(
         platform_key="windows-x86_64",
@@ -135,9 +151,20 @@ def platform_artifact(platform_key: str | None = DEFAULT_PLATFORM_KEY) -> Platfo
 
 
 def default_url(version: str, platform_key: str | None = DEFAULT_PLATFORM_KEY) -> str:
-    normalized = version[1:] if version.startswith("v") else version
     artifact = platform_artifact(platform_key)
-    return RELEASE_URL_TEMPLATE.format(version=normalized, artifact=artifact.artifact_name)
+    return release_asset_url(version, artifact.artifact_name)
+
+
+def release_asset_url(version: str, artifact_name: str) -> str:
+    normalized = version[1:] if version.startswith("v") else version
+    return RELEASE_URL_TEMPLATE.format(version=normalized, artifact=artifact_name)
+
+
+def sibling_asset_url(url: str, artifact_name: str) -> str:
+    base, separator, _filename = url.rpartition("/")
+    if not separator:
+        return artifact_name
+    return f"{base}/{artifact_name}"
 
 
 def default_install_dir(platform_key: str | None = None) -> Path:
@@ -202,7 +229,7 @@ def parse_sha256(text: str) -> str:
 
 
 def resolve_expected_checksum(
-    artifact: PlatformArtifact,
+    artifact: PlatformArtifact | SidecarArtifact,
     *,
     url: str,
     checksum: str | None = None,
@@ -222,6 +249,7 @@ def install_optcuts(
     install_dir: Path,
     platform_key: str | None = DEFAULT_PLATFORM_KEY,
     target_name: str | None = None,
+    sidecars: Sequence[tuple[SidecarArtifact, str, str]] = (),
     force: bool = False,
     skip_platform_check: bool = False,
 ) -> Path:
@@ -229,24 +257,41 @@ def install_optcuts(
     ensure_supported_platform(artifact, skip=skip_platform_check)
     install_dir = install_dir.expanduser().resolve()
     target = install_dir / (target_name or artifact.target_name)
-    if target.exists() and not force:
-        raise InstallError(f"{target} already exists. Use --force to overwrite it.")
+    planned_targets = [target]
+    planned_targets.extend(
+        install_dir / sidecar.target_name
+        for sidecar, _url, _checksum in sidecars
+    )
+    if not force:
+        existing_targets = [path for path in planned_targets if path.exists()]
+        if existing_targets:
+            existing = ", ".join(str(path) for path in existing_targets)
+            raise InstallError(f"{existing} already exists. Use --force to overwrite it.")
 
     install_dir.mkdir(parents=True, exist_ok=True)
-    expected = checksum.strip().lower()
-    if not expected:
-        raise InstallError("Expected SHA256 checksum cannot be empty.")
+    downloads = [(artifact.artifact_name, url, checksum, target)]
+    downloads.extend(
+        (sidecar.artifact_name, sidecar_url, sidecar_checksum, install_dir / sidecar.target_name)
+        for sidecar, sidecar_url, sidecar_checksum in sidecars
+    )
 
     with tempfile.TemporaryDirectory(prefix="topoppi-optcuts-") as tmp:
-        tmp_path = Path(tmp) / artifact.artifact_name
-        download_file(url, tmp_path)
-        actual = sha256_file(tmp_path)
-        if actual.lower() != expected:
-            raise InstallError(f"Checksum mismatch for {url}: expected {expected}, got {actual}.")
+        verified_artifacts = []
+        for artifact_name, artifact_url, expected_checksum, destination in downloads:
+            expected = expected_checksum.strip().lower()
+            if not expected:
+                raise InstallError(f"Expected SHA256 checksum for {artifact_name} cannot be empty.")
+            tmp_path = Path(tmp) / artifact_name
+            download_file(artifact_url, tmp_path)
+            actual = sha256_file(tmp_path)
+            if actual.lower() != expected:
+                raise InstallError(f"Checksum mismatch for {artifact_url}: expected {expected}, got {actual}.")
+            verified_artifacts.append((tmp_path, destination))
 
-        shutil.move(str(tmp_path), target)
-        mode = target.stat().st_mode
-        target.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        for tmp_path, destination in verified_artifacts:
+            shutil.move(str(tmp_path), destination)
+            mode = destination.stat().st_mode
+            destination.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return target
 
 
@@ -256,13 +301,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         artifact = platform_artifact(args.platform)
         url = args.url or default_url(args.version, artifact.platform_key)
-        checksum = resolve_expected_checksum(artifact, url=url, checksum=args.checksum, checksum_url=args.checksum_url)
+        checksum = resolve_expected_checksum(
+            artifact,
+            url=url,
+            checksum=args.checksum,
+            checksum_url=args.checksum_url,
+        )
         install_dir = Path(args.install_dir) if args.install_dir else default_install_dir(artifact.platform_key)
+        sidecar_downloads = []
+        for sidecar in artifact.sidecars:
+            sidecar_url = (
+                sibling_asset_url(url, sidecar.artifact_name)
+                if args.url
+                else release_asset_url(args.version, sidecar.artifact_name)
+            )
+            sidecar_downloads.append(
+                (sidecar, sidecar_url, resolve_expected_checksum(sidecar, url=sidecar_url))
+            )
         target = install_optcuts(
             url=url,
             checksum=checksum,
             install_dir=install_dir,
             platform_key=artifact.platform_key,
+            sidecars=sidecar_downloads,
             force=args.force,
             skip_platform_check=args.skip_platform_check,
         )

@@ -55,7 +55,7 @@ jobs:
           rm -rf dist build src/*.egg-info
           python -m build
           python -m twine check dist/*
-          if tar -tzf dist/*.tar.gz | grep -E 'tests/fixtures/.*(_cutoff|\.topoppi\.json)'; then
-            echo "Generated fixture output leaked into sdist." >&2
+          if tar -tzf dist/*.tar.gz | grep -E 'tools/OptCuts/(OptCuts_bin|libigl_stb_image)|tests/fixtures/.*(_cutoff|\.topoppi\.json)'; then
+            echo "Generated fixture output or OptCuts binary leaked into sdist." >&2
             exit 1
           fi

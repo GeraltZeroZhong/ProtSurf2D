@@ -44,8 +44,9 @@ python -m build
 python -m twine check dist/*
 mkdir -p release-assets
 install -m 755 tools/OptCuts/OptCuts_bin release-assets/OptCuts_bin-linux-x86_64
-sha256sum release-assets/OptCuts_bin-linux-x86_64
-tar -tzf dist/*.tar.gz | grep -E 'tools/OptCuts/OptCuts_bin|tests/fixtures/.*(_cutoff|\.topoppi\.json)' && exit 1 || true
+install -m 755 tools/OptCuts/libigl_stb_image.so release-assets/libigl_stb_image-linux-x86_64.so
+sha256sum release-assets/OptCuts_bin-linux-x86_64 release-assets/libigl_stb_image-linux-x86_64.so
+tar -tzf dist/*.tar.gz | grep -E 'tools/OptCuts/(OptCuts_bin|libigl_stb_image)|tests/fixtures/.*(_cutoff|\.topoppi\.json)' && exit 1 || true
 ```
 
 For Windows installer validation, run the `Windows Installer` workflow. It
@@ -95,8 +96,8 @@ git push origin vX.Y
 
 The `Publish` workflow runs only from version tags, verifies the tag matches
 the package version, and publishes through PyPI Trusted Publishing. It also
-creates or updates the GitHub release and
-attaches `OptCuts_bin-linux-x86_64`, checksum sidecars, and any optional
+creates or updates the GitHub release and attaches `OptCuts_bin-linux-x86_64`,
+`libigl_stb_image-linux-x86_64.so`, checksum sidecars, and any optional
 `OptCuts_bin-windows-x86_64.exe` binary present under `tools/OptCuts`.
 The separate `Windows Installer` workflow builds and attaches
 `TopoPPI-X.Y-windows-x86_64-setup.exe`, its `.sha256` sidecar, and standalone
@@ -118,16 +119,19 @@ After PyPI upload and GitHub release creation:
 
 ## Binary Policy
 
-The bundled `tools/OptCuts/OptCuts_bin` is not included in the Python package distribution.
+The bundled `tools/OptCuts/OptCuts_bin` and `tools/OptCuts/libigl_stb_image.so`
+are not included in the Python package distribution.
 Release artifact names expected by `topoppi-install-optcuts` are:
 
 - `OptCuts_bin-linux-x86_64`
+- `libigl_stb_image-linux-x86_64.so`
 - `OptCuts_bin-windows-x86_64.exe`
 
-The expected Linux SHA256 is:
+The expected Linux SHA256 values are:
 
 ```text
-8f973b20dbf0db83409317dd267f6b674cfa9e9173fb77c260af70104e01426d
+OptCuts_bin-linux-x86_64           0395b2b34f359b59a230e4833e320a55f81d12d90404f1c72b30c3eb8aef3e9f
+libigl_stb_image-linux-x86_64.so   996a27b49b5b42b5c97554898ab3e943baa4c08969df89f7c4f6e54dabbbf65f
 ```
 
 Document platform support, binary provenance, and licensing separately for any GitHub release artifact.

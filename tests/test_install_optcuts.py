@@ -8,6 +8,7 @@ from unittest import mock
 from topoppi.install_optcuts import (
     ARTIFACT_NAME,
     PLATFORM_ARTIFACTS,
+    SidecarArtifact,
     default_install_dir,
     default_url,
     install_optcuts,
@@ -81,6 +82,33 @@ class InstallOptCutsTests(unittest.TestCase):
             self.assertEqual(target, install_dir / "OptCuts_bin.exe")
             self.assertEqual(target.read_bytes(), payload)
             self.assertTrue(target.stat().st_mode & stat.S_IXUSR)
+
+    def test_installs_sidecar_artifact_next_to_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / ARTIFACT_NAME
+            payload = b"fake optcuts binary"
+            source.write_bytes(payload)
+            checksum = hashlib.sha256(payload).hexdigest()
+
+            sidecar = SidecarArtifact("libigl_stb_image-linux-x86_64.so", "libigl_stb_image.so")
+            sidecar_source = tmp_path / sidecar.artifact_name
+            sidecar_payload = b"fake sidecar library"
+            sidecar_source.write_bytes(sidecar_payload)
+            sidecar_checksum = hashlib.sha256(sidecar_payload).hexdigest()
+
+            install_dir = tmp_path / "bin"
+            target = install_optcuts(
+                url=source.as_uri(),
+                checksum=checksum,
+                install_dir=install_dir,
+                sidecars=((sidecar, sidecar_source.as_uri(), sidecar_checksum),),
+                skip_platform_check=True,
+            )
+
+            self.assertEqual(target, install_dir / "OptCuts_bin")
+            self.assertEqual((install_dir / "libigl_stb_image.so").read_bytes(), sidecar_payload)
+            self.assertTrue((install_dir / "libigl_stb_image.so").stat().st_mode & stat.S_IXUSR)
 
     def test_reads_checksum_from_release_sidecar(self):
         with tempfile.TemporaryDirectory() as tmp:
