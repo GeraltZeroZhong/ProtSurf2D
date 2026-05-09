@@ -46,7 +46,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         surface=replace(DEFAULT_RUN_CONFIG.surface, grid_resolution=args.res, sigma=args.sigma),
         topology=replace(DEFAULT_RUN_CONFIG.topology, distance_cutoff=args.cutoff),
         parameterization=DEFAULT_RUN_CONFIG.parameterization,
-        optcuts=replace(DEFAULT_RUN_CONFIG.optcuts, optcuts_bin=args.optcuts_bin, patch_gap=args.patch_gap),
+        optcuts=replace(DEFAULT_RUN_CONFIG.optcuts, optcuts_bin=args.optcuts_bin, patch_gap=args.patch_gap).for_headless(),
         visualization=replace(DEFAULT_RUN_CONFIG.visualization, show_plot=args.show),
     )
     try:

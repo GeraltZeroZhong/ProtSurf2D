@@ -254,7 +254,7 @@ Outputs are written under:
 - `--show`: display the Matplotlib figure after saving
 - `-v, --verbose`: verbose logging
 
-CLI defaults are read from `topoppi.config.DEFAULT_RUN_CONFIG`.
+CLI defaults are read from `topoppi.config.DEFAULT_RUN_CONFIG`; CLI runs force OptCuts headless mode so they work on display-less runners and servers.
 
 ### Benchmark configuration (`BenchmarkConfig`)
 
