@@ -31,6 +31,8 @@ conda-meta/
 *.swo
 .DS_Store
 Thumbs.db
+*:Zone.Identifier
+TopoPPI_icon_assets/
 
 # Logs and temporary files
 *.log

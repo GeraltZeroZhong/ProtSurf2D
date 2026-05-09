@@ -1,5 +1,9 @@
 # TopoPPI
 
+<p align="center">
+  <img width="96" height="96" alt="TopoPPI icon" src="./src/topoppi/assets/topoppi.png" />
+</p>
+
 > **Release:** This README targets `topoppi 1.2`. The matching GitHub release tag is `v1.2`.
 
 TopoPPI maps **protein-protein interaction (PPI) interfaces** from 3D structures into annotated 2D UV atlases. It is built for interactive inspection, reproducible figure export, and benchmark-style evaluation across structure sets.
@@ -13,54 +17,46 @@ The toolkit includes:
 
 The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a partner chain, flattens patches to UV space, optimizes UVs with [**OptCuts**](https://github.com/liminchen/OptCuts), and renders annotated interface maps.
 
-<img width="1920" height="1032" alt="TopoPPI GUI showing the Basic workflow and interface map" src="https://raw.githubusercontent.com/GeraltZeroZhong/TopoPPI/v1.2/docs/assets/3ff22687bd403a67cd66caeacc95baee.png" />
+<img width="1920" height="1032" alt="TopoPPI GUI showing the Basic workflow and interface map" src="./docs/assets/3ff22687bd403a67cd66caeacc95baee.png" />
 
 ---
 
-## Quick Start (GUI, ~5 minutes)
+## Quick Start (GUI, shortest path)
 
-If you only want to launch the GUI and run your first structure quickly:
+### Windows x86-64
 
-1. Create and activate the Conda environment:
+For Windows users, use the one-click installer from the [TopoPPI v1.2 release](https://github.com/GeraltZeroZhong/TopoPPI/releases/tag/v1.2):
 
-```bash
-conda env create -f environment.yml
-conda activate bio3d
+```text
+TopoPPI-1.2-windows-x86_64-setup.exe
 ```
 
-2. Install TopoPPI in editable mode:
+Download it, keep your internet connection on, double-click it, and finish the installer. It installs TopoPPI, Python, the required scientific packages, and the bundled Windows OptCuts executable into `%LOCALAPPDATA%\TopoPPI`; no separate Conda, Python, or OptCuts setup is needed. If Windows SmartScreen warns that the unsigned installer is from an unknown publisher, continue only if the file came from the official GitHub release.
+
+After installation, open **TopoPPI GUI** from the Windows Start Menu.
+
+### Linux x86-64
+
+Use Conda for the scientific stack, then install TopoPPI and OptCuts:
 
 ```bash
-pip install -e ".[benchmark,interactions,meshio]"
-```
-
-3. Install OptCuts into the active Conda environment:
-
-```bash
+conda create -n topoppi -c conda-forge python=3.10 tk igl=2.6.* numpy scipy biopython scikit-image matplotlib trimesh networkx pillow rtree shapely openbabel mdanalysis rdkit psutil tqdm meshio pip
+conda activate topoppi
+pip install "topoppi[benchmark,interactions,meshio]"
 topoppi-install-optcuts
-which OptCuts_bin
-```
-
-   Source checkout users can also install the bundled binary directly:
-
-```bash
-bash tools/OptCuts/install_optcuts.sh
-```
-
-4. Launch GUI:
-
-```bash
 topoppi-gui
 ```
 
-5. In the GUI:
-   - Use **Basic** to load a `.pdb`/`.cif` structure file,
-   - Review detected chains and use **Swap A/B** if the surface/partner assignment is reversed,
-   - Choose which interaction types to display and adjust colors if needed,
-   - Click **Run Single Analysis** to generate and auto-save the interface map.
+### Run Your First Structure
 
-> Note: [OptCuts](https://github.com/liminchen/OptCuts) is required by the current pipeline. Running without OptCuts is intentionally unsupported.
-> PyPI wheels do not include the OptCuts binary/runtime files, but the `topoppi-install-optcuts` command downloads supported platform artifacts from the matching GitHub release and installs them into your active Conda environment or user-local TopoPPI directory.
+In the GUI:
+
+1. Use **Basic** to load a `.pdb` or `.cif` structure file.
+2. Review detected chains and use **Swap A/B** if the surface/partner assignment is reversed.
+3. Choose which interaction types to display and adjust colors if needed.
+4. Click **Run Single Analysis** to generate and auto-save the interface map.
+
+> Note: [OptCuts](https://github.com/liminchen/OptCuts) is required by the current pipeline. The Windows installer includes the Windows OptCuts executable. PyPI wheels do not include OptCuts, so Linux x86-64 users should run `topoppi-install-optcuts` after installing TopoPPI.
 
 ---
 
@@ -460,7 +456,7 @@ Fix:
 
 - **v1.2** adds Windows x86-64 installer scaffolding and Windows-aware OptCuts artifact installation, plus Linux OptCuts runtime sidecar handling.
 - **v1.1** adds improved GUI workflows, benchmark reporting, reproducibility manifests, PyPI packaging, and one-command Linux x86-64 OptCuts installation.
-- **v1.0.0** is the initial public release of TopoPPI.
+- **v1.0** is the initial public release of TopoPPI.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
