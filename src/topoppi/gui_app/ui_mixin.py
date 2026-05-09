@@ -17,13 +17,29 @@ from .forms import parse_single_run_form
 
 class UIMixin:
     def _init_controls(self):
-        ttk.Label(self.left_frame, text="TopoPPI", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 2))
+        header = ttk.Frame(self.left_frame, style="Sidebar.TFrame")
+        header.pack(fill=tk.X, pady=(0, 10))
+
+        root_icon = getattr(self.root, "_topoppi_icon_image", None)
+        if root_icon is not None:
+            self.sidebar_icon_image = root_icon.subsample(5, 5)
+            tk.Label(
+                header,
+                image=self.sidebar_icon_image,
+                background="#f5f7fb",
+                borderwidth=0,
+                highlightthickness=0,
+            ).pack(side=tk.LEFT, padx=(0, 10))
+
+        header_text = ttk.Frame(header, style="Sidebar.TFrame")
+        header_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(header_text, text="TopoPPI", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 2))
         ttk.Label(
-            self.left_frame,
+            header_text,
             text="Protein interface mapping for reproducible UV atlas figures",
             style="Muted.TLabel",
-            wraplength=self.config.sidebar_width - 48,
-        ).pack(anchor=tk.W, pady=(0, 10))
+            wraplength=self.config.sidebar_width - 104,
+        ).pack(anchor=tk.W)
 
         self._init_settings_tabs()
         self._init_basic_input_controls(self.basic_tab)
