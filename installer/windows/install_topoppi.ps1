@@ -3,7 +3,7 @@ param(
     [string]$InstallDir = "$env:LOCALAPPDATA\TopoPPI",
     [string]$Version = "1.3",
     [string]$PackageSpec = "",
-    [string]$MicromambaUrl = "https://micro.mamba.pm/api/micromamba/win-64/latest"
+    [string]$MicromambaUrl = "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-win-64"
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,35 +33,15 @@ try {
     $BinDir = Join-Path $InstallDir "bin"
     $EnvDir = Join-Path $InstallDir "env"
     $RootPrefix = Join-Path $InstallDir "mamba-root"
-    $TempDir = Join-Path $InstallDir "tmp"
     $OptCutsDir = Join-Path $InstallDir "bin"
     $Micromamba = Join-Path $BinDir "micromamba.exe"
     $BundledOptCuts = Join-Path $InstallDir "installer\assets\OptCuts_bin-windows-x86_64.exe"
 
-    New-Item -ItemType Directory -Force -Path $InstallDir, $BinDir, $TempDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $InstallDir, $BinDir | Out-Null
 
     if (!(Test-Path $Micromamba)) {
         Write-Step "Downloading micromamba"
-        $Archive = Join-Path $TempDir "micromamba.tar.bz2"
-        $ExtractDir = Join-Path $TempDir "micromamba"
-        Remove-Item -Recurse -Force $ExtractDir -ErrorAction SilentlyContinue
-        New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
-
-        Invoke-WebRequest -Uri $MicromambaUrl -OutFile $Archive
-        if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
-            $Tar = Join-Path $env:SystemRoot "Sysnative\tar.exe"
-        }
-        else {
-            $Tar = Join-Path $env:SystemRoot "System32\tar.exe"
-        }
-        Invoke-External $Tar @("-xf", $Archive, "-C", $ExtractDir)
-
-        $ExtractedMicromamba = Get-ChildItem -Path $ExtractDir -Recurse -Filter "micromamba.exe" |
-            Select-Object -First 1
-        if ($null -eq $ExtractedMicromamba) {
-            throw "micromamba.exe was not found in the downloaded archive."
-        }
-        Copy-Item -Force $ExtractedMicromamba.FullName $Micromamba
+        Invoke-WebRequest -Uri $MicromambaUrl -OutFile $Micromamba
     }
 
     $env:MAMBA_ROOT_PREFIX = $RootPrefix

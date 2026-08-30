@@ -40,9 +40,9 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn(f'[string]$Version = "{__version__}"', bootstrap)
         self.assertIn("import MDAnalysis, prolif, rdkit", bootstrap)
         self.assertIn("Verifying ProLIF interaction stack", bootstrap)
-        self.assertIn('[Environment]::Is64BitProcess', bootstrap)
-        self.assertIn('Join-Path $env:SystemRoot "Sysnative\\tar.exe"', bootstrap)
-        self.assertNotIn('Invoke-External "tar.exe"', bootstrap)
+        self.assertIn("micromamba-releases/releases/latest/download/micromamba-win-64", bootstrap)
+        self.assertIn("Invoke-WebRequest -Uri $MicromambaUrl -OutFile $Micromamba", bootstrap)
+        self.assertNotIn("tar.exe", bootstrap)
         self.assertIn('Remove-Item (Join-Path $InstallDir "TopoPPI GUI.cmd")', bootstrap)
 
         for platform_name in ("windows", "macos"):
