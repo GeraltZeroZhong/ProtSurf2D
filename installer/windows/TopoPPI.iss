@@ -78,9 +78,7 @@ begin
 
   if ResultCode <> 0 then
     RaiseException(
-      Format(
-        'TopoPPI environment setup failed with exit code %d. Review the PowerShell output, then run the installer again.',
-        [ResultCode]
-      )
+      'TopoPPI setup failed with exit code ' + IntToStr(ResultCode) +
+      '. Review the PowerShell output and try again.'
     );
 end;
