@@ -51,7 +51,7 @@ for flag in ${LDFLAGS:-}; do
     *) linker_flags+=("${flag}") ;;
   esac
 done
-export LDFLAGS="${linker_flags[*]}"
+export LDFLAGS="${linker_flags[*]-}"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   platform_args+=("-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0")
 else
