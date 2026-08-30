@@ -53,6 +53,7 @@ $SparseLocalSolvesPatch = Join-Path $PSScriptRoot "reproducible\sparse-local-sol
 $OscillationTolerancePatch = Join-Path $PSScriptRoot "reproducible\oscillation-tolerance-cd230267.patch"
 $TopologyCycleAccelerationPatch = Join-Path $PSScriptRoot "reproducible\topology-cycle-acceleration-cd230267.patch"
 $Mpl2SparseSolverPatch = Join-Path $PSScriptRoot "reproducible\mpl2-sparse-solver-cd230267.patch"
+$ModernCompilerPatch = Join-Path $PSScriptRoot "reproducible\modern-compiler-compatibility-cd230267.patch"
 $ResidueAwarePatch = Join-Path $PSScriptRoot "residue_aware\optcuts-cd230267.patch"
 $SourceProvenancePatch = Join-Path $PSScriptRoot "residue_aware\source-vertex-provenance-cd230267.patch"
 $FootprintHeader = Join-Path $PSScriptRoot "residue_aware\ResidueFootprintEnergy.hpp"
@@ -60,7 +61,7 @@ $FootprintSource = Join-Path $PSScriptRoot "residue_aware\ResidueFootprintEnergy
 $StbExportHeader = Join-Path $SourceDir "ext\libigl\external\stb_image\igl_stb_image_export.h"
 $SortableRowHeader = Join-Path $SourceDir "ext\libigl\include\igl\SortableRow.h"
 
-foreach ($Patch in @($ReproducibilityPatch, $ObjOutputPrecisionPatch, $StaticStbPatch, $SparseLocalSolvesPatch, $OscillationTolerancePatch, $ResidueAwarePatch, $SourceProvenancePatch, $TopologyCycleAccelerationPatch, $Mpl2SparseSolverPatch)) {
+foreach ($Patch in @($ReproducibilityPatch, $ObjOutputPrecisionPatch, $StaticStbPatch, $SparseLocalSolvesPatch, $OscillationTolerancePatch, $ResidueAwarePatch, $SourceProvenancePatch, $TopologyCycleAccelerationPatch, $Mpl2SparseSolverPatch, $ModernCompilerPatch)) {
     & git -C $SourceDir apply --check $Patch 2>$null
     if ($LASTEXITCODE -eq 0) {
         Invoke-External "git" @("-C", $SourceDir, "apply", $Patch)

@@ -131,6 +131,11 @@ class ReleaseMetadataTests(unittest.TestCase):
             self.assertIn("root.update_idletasks()", workflow)
         self.assertIn("TopoPPI Command Prompt.lnk", windows)
         self.assertIn("& $cli --version", windows)
+        self.assertIn("Start-Process -FilePath $installer", windows)
+        self.assertIn("Start-Process -FilePath $uninstaller", windows)
+        self.assertIn('"/DIR=`"$installDir`""', windows)
+        self.assertIn('"/LOG=`"$installLog`""', windows)
+        self.assertIn('"TopoPPI Installed"', windows)
         self.assertIn('"cmake<4"', macos)
         self.assertEqual(macos.count('export PATH="$RUNNER_TEMP/topoppi-macos-build/bin:$PATH"'), 2)
 
