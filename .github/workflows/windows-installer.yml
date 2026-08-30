@@ -86,6 +86,7 @@ jobs:
           "installer=$installer" >> $env:GITHUB_OUTPUT
 
       - name: Run installed application lifecycle smoke
+        timeout-minutes: 40
         shell: pwsh
         run: |
           $installer = (Resolve-Path "${{ steps.artifact.outputs.installer }}").Path
@@ -95,7 +96,8 @@ jobs:
           Set-Content -Path (Join-Path $installDir "TopoPPI GUI.cmd") -Value "legacy launcher"
           $installProcess = Start-Process -FilePath $installer -ArgumentList @(
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$installDir`"", "/LOG=`"$installLog`""
-          ) -Wait -PassThru
+          ) -PassThru
+          $installProcess | Wait-Process -Timeout 1800 -ErrorAction Stop
           if ($installProcess.ExitCode -ne 0) {
             Get-Content $installLog -Tail 200 -ErrorAction SilentlyContinue
             throw "TopoPPI setup failed with exit code $($installProcess.ExitCode)."
@@ -166,7 +168,8 @@ jobs:
           Set-Content -Path (Join-Path $installDir "gui-startup.log") -Value "lifecycle smoke"
           $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList @(
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
-          ) -Wait -PassThru
+          ) -PassThru
+          $uninstallProcess | Wait-Process -Timeout 600 -ErrorAction Stop
           if ($uninstallProcess.ExitCode -ne 0) {
             throw "TopoPPI uninstall failed with exit code $($uninstallProcess.ExitCode)."
           }
