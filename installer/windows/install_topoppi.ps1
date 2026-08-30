@@ -48,7 +48,13 @@ try {
         New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
 
         Invoke-WebRequest -Uri $MicromambaUrl -OutFile $Archive
-        Invoke-External "tar.exe" @("-xjf", $Archive, "-C", $ExtractDir)
+        if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+            $Tar = Join-Path $env:SystemRoot "Sysnative\tar.exe"
+        }
+        else {
+            $Tar = Join-Path $env:SystemRoot "System32\tar.exe"
+        }
+        Invoke-External $Tar @("-xf", $Archive, "-C", $ExtractDir)
 
         $ExtractedMicromamba = Get-ChildItem -Path $ExtractDir -Recurse -Filter "micromamba.exe" |
             Select-Object -First 1
