@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export CMAKE_POLICY_VERSION_MINIMUM=3.5
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 output_path="${1:-${script_dir}/OptCuts_bin}"
 source_repo="${2:-https://github.com/liminchen/OptCuts.git}"

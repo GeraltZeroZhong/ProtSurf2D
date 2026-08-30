@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$env:CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 
 function Invoke-External {
     param(
@@ -145,14 +146,14 @@ if ($MainText -notmatch "TOPOPPI_WINDOWS_PATCH") {
 }
 
 Remove-Item -Recurse -Force $BuildDir -ErrorAction SilentlyContinue
-$PathMap = "/pathmap:`"$RepoRoot`"=TopoPPI"
+$DeterministicFlags = "/experimental:deterministic /pathmap:`"$RepoRoot`"=TopoPPI"
 Invoke-External "cmake" @(
     "-S", $SourceDir,
     "-B", $BuildDir,
     "-G", "Visual Studio 17 2022",
     "-A", "x64",
-    "-DCMAKE_C_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /MT /Brepro $PathMap",
-    "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /DEIGEN_MPL2_ONLY /MT /Brepro $PathMap",
+    "-DCMAKE_C_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /MT /Brepro $DeterministicFlags",
+    "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /DEIGEN_MPL2_ONLY /MT /Brepro $DeterministicFlags",
     "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=/INCREMENTAL:NO /Brepro /DEBUG:NONE"
 )
 $TbbVersionFile = Join-Path $BuildDir "ext\tbb\version_string.ver"
