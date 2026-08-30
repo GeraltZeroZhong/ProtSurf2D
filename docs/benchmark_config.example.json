@@ -1,0 +1,62 @@
+{
+  "input_folder": "../dataset/structures",
+  "output_root": "../benchmark_results/formal_run",
+  "chain_selection_mode": "manifest",
+  "manifest_path": "../dataset/benchmark_manifest.csv",
+  "formal_mode": true,
+  "expected_git_commit": "0000000000000000000000000000000000000000",
+  "coordinate_audit_path": "../dataset/coordinate_audit.json",
+  "expected_coordinate_audit_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "benchmark_purpose": "quality",
+  "repetitions": 1,
+  "warmup_runs": 0,
+  "max_workers": 1,
+  "threads_per_worker": 4,
+  "random_seed": 20260817,
+  "bootstrap_iterations": 2000,
+  "contact_distance_angstrom": 6.0,
+  "optcuts_variants": [
+    "optcuts_automatic",
+    "optcuts_lscm_initialized",
+    "residue_aware_optcuts"
+  ],
+  "include_topology_ablation": true,
+  "surface": {
+    "grid_resolution": 1.0,
+    "sigma": 1.0,
+    "level": 0.1,
+    "padding": 10.0,
+    "max_voxels": 40000000,
+    "adaptive_resolution": false,
+    "max_adaptive_resolution": 1.0,
+    "smoothing_iterations": 0
+  },
+  "topology": {
+    "distance_cutoff": 4.0,
+    "min_patch_area_angstrom2": 10.0,
+    "min_patch_vertices": 3
+  },
+  "parameterization": {
+    "method": "auto",
+    "min_vertices": 3,
+    "min_face_area": 1e-12,
+    "min_angle_deg": 1e-6,
+    "max_aspect_ratio": 1e12,
+    "uv_epsilon": 1e-6,
+    "slim_iterations": 20,
+    "slim_boundary_constraint_weight": 100000000000.0
+  },
+  "optcuts": {
+    "optcuts_bin": "../tools/OptCuts/OptCuts_bin",
+    "expected_binary_sha256": "d7990fc4f1ca46e0ba06b70801b64701dfdeb795f7efee6f7b9f197aa3b426eb",
+    "use_input_uv": false,
+    "optcuts_mode": 100,
+    "optcuts_lambda_init": 0.999,
+    "optcuts_distortion_bound": 4.1,
+    "optcuts_use_bijectivity": true,
+    "optcuts_initial_cut_option": 0,
+    "residue_fragmentation_weight": 20.0,
+    "patch_gap": 0.08,
+    "timeout_sec": 600.0
+  }
+}

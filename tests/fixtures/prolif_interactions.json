@@ -5,6 +5,8 @@
   "interactions": [
     {"res_a_seq": "1", "res_b_seq": "2", "interaction": "HBAcceptor"},
     {"res_a_seq": "2A", "res_b_seq": "5", "interaction": "Hydrophobic"},
-    {"res_a_seq": "bad", "res_b_seq": "6", "interaction": "Unknown"}
+    {"res_a_seq": "bad", "res_b_seq": "6", "interaction": "Unknown"},
+    {"res_a_seq": "3", "res_b_seq": "7A", "interaction": "XBDonor"},
+    {"res_a_seq": "4", "res_b_seq": "8", "interaction": "FutureInteraction"}
   ]
 }

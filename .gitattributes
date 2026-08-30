@@ -1,0 +1,2 @@
+# OptCuts patches preserve whitespace from the pinned upstream source.
+tools/OptCuts/**/*.patch -whitespace

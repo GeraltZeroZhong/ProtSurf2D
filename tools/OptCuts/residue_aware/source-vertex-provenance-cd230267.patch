@@ -1,0 +1,31 @@
+diff --git a/src/TriMesh.cpp b/src/TriMesh.cpp
+--- a/src/TriMesh.cpp
++++ b/src/TriMesh.cpp
+@@ -558,6 +558,27 @@ namespace OptCuts {
+             return;
+         }
+         residueFootprintEnergy = TopoPPI::ResidueFootprintEnergy::load(path);
++        const std::vector<int>& inputSources =
++            residueFootprintEnergy.inputSourceVertices();
++        std::vector<bool> usedVertex(sourceVertex.size(), false);
++        for(int face = 0; face < F.rows(); ++face) {
++            for(int corner = 0; corner < 3; ++corner) {
++                usedVertex[F(face, corner)] = true;
++            }
++        }
++        for(int vertex = 0; vertex < sourceVertex.size(); ++vertex) {
++            if(!usedVertex[vertex]) {
++                sourceVertex[vertex] = -1;
++                continue;
++            }
++            const int inputVertex = sourceVertex[vertex];
++            if(inputVertex < 0 || inputVertex >= static_cast<int>(inputSources.size())) {
++                throw std::runtime_error(
++                    "OptCuts input vertex is absent from the footprint source map."
++                );
++            }
++            sourceVertex[vertex] = inputSources[inputVertex];
++        }
+         residueFootprintWeight = weight;
+         synchronizeResidueFootprints();
+         std::cout << "residue footprint energy enabled, weight=" << residueFootprintWeight

@@ -1,0 +1,25 @@
+{
+  "input_folder": "../tests/fixtures",
+  "output_root": "../benchmark_results/quickstart",
+  "chain_a": "A",
+  "chain_b": "B",
+  "chain_selection_mode": "configured",
+  "benchmark_purpose": "quality",
+  "execution_profile": "comparative",
+  "formal_mode": false,
+  "repetitions": 1,
+  "warmup_runs": 0,
+  "max_workers": 1,
+  "threads_per_worker": 1,
+  "bootstrap_iterations": 200,
+  "optcuts_variants": [
+    "optcuts_automatic",
+    "residue_aware_optcuts"
+  ],
+  "include_topology_ablation": false,
+  "optcuts": {
+    "optcuts_bin": "../tools/OptCuts/OptCuts_bin",
+    "residue_fragmentation_weight": 20.0,
+    "timeout_sec": 120.0
+  }
+}

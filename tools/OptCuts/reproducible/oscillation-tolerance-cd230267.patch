@@ -1,0 +1,25 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index fbf4b3c..2bc3a0d 100755
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -622,6 +622,8 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+ {
+     Eigen::MatrixXd edgeLengths; igl::edge_lengths(triSoup[channel_result]->V_rest, triSoup[channel_result]->F, edgeLengths);
+-    const double eps_E_se = 1.0e-3 * edgeLengths.minCoeff() / triSoup[channel_result]->virtualRadius;
++    const double eps_E_se = std::max(
++        1.0e-6,
++        1.0e-3 * edgeLengths.minCoeff() / triSoup[channel_result]->virtualRadius);
+     
+     // measurement and energy value computation
+     const double E_SD = optimizer->getLastEnergyVal(true) / energyParams[0];
+@@ -631,7 +633,9 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+     double stretch_l2, stretch_inf, stretch_shear, compress_inf;
+     triSoup[channel_result]->computeStandardStretch(stretch_l2, stretch_inf, stretch_shear, compress_inf);
+     double measure_bound = E_SD;
+-    const double eps_lambda = std::min(1.0e-3, std::abs(updateLambda(measure_bound) - energyParams[0]));
++    const double eps_lambda = std::max(
++        1.0e-6,
++        std::min(1.0e-3, std::abs(updateLambda(measure_bound) - energyParams[0])));
+     
+     //TODO?: stop when first violates bounds from feasible, don't go to best feasible. check after each merge whether distortion is violated
+     // oscillation detection

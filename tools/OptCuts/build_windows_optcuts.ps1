@@ -3,8 +3,7 @@ param(
     [string]$OutputDir = "release-assets",
     [string]$SourceDir = "",
     [string]$OptCutsRepo = "https://github.com/liminchen/OptCuts.git",
-    [string]$OptCutsCommit = "cd2302671af7954f263b0ea93d8419aa943d54be",
-    [switch]$SkipSmoke
+    [string]$OptCutsCommit = "cd2302671af7954f263b0ea93d8419aa943d54be"
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,7 +33,9 @@ $SourceDir = [System.IO.Path]::GetFullPath($SourceDir)
 New-Item -ItemType Directory -Force -Path $OutputDir, $WorkRoot | Out-Null
 
 if (!(Test-Path (Join-Path $SourceDir ".git"))) {
-    Remove-Item -Recurse -Force $SourceDir -ErrorAction SilentlyContinue
+    if (Test-Path $SourceDir) {
+        throw "SourceDir exists but is not a Git checkout: $SourceDir"
+    }
     Invoke-External "git" @("clone", $OptCutsRepo, $SourceDir)
 }
 
@@ -44,8 +45,34 @@ Invoke-External "git" @("-C", $SourceDir, "checkout", "--detach", $OptCutsCommit
 $CMakeLists = Join-Path $SourceDir "CMakeLists.txt"
 $MainCpp = Join-Path $SourceDir "src\main.cpp"
 $OptimizerCpp = Join-Path $SourceDir "src\Optimizer.cpp"
+$ReproducibilityPatch = Join-Path $PSScriptRoot "reproducible\candidate-validity-cd230267.patch"
+$ObjOutputPrecisionPatch = Join-Path $PSScriptRoot "reproducible\obj-output-precision-cd230267.patch"
+$StaticStbPatch = Join-Path $PSScriptRoot "reproducible\static-stb-cd230267.patch"
+$SparseLocalSolvesPatch = Join-Path $PSScriptRoot "reproducible\sparse-local-solves-cd230267.patch"
+$OscillationTolerancePatch = Join-Path $PSScriptRoot "reproducible\oscillation-tolerance-cd230267.patch"
+$TopologyCycleAccelerationPatch = Join-Path $PSScriptRoot "reproducible\topology-cycle-acceleration-cd230267.patch"
+$Mpl2SparseSolverPatch = Join-Path $PSScriptRoot "reproducible\mpl2-sparse-solver-cd230267.patch"
+$ResidueAwarePatch = Join-Path $PSScriptRoot "residue_aware\optcuts-cd230267.patch"
+$SourceProvenancePatch = Join-Path $PSScriptRoot "residue_aware\source-vertex-provenance-cd230267.patch"
+$FootprintHeader = Join-Path $PSScriptRoot "residue_aware\ResidueFootprintEnergy.hpp"
+$FootprintSource = Join-Path $PSScriptRoot "residue_aware\ResidueFootprintEnergy.cpp"
 $StbExportHeader = Join-Path $SourceDir "ext\libigl\external\stb_image\igl_stb_image_export.h"
 $SortableRowHeader = Join-Path $SourceDir "ext\libigl\include\igl\SortableRow.h"
+
+foreach ($Patch in @($ReproducibilityPatch, $ObjOutputPrecisionPatch, $StaticStbPatch, $SparseLocalSolvesPatch, $OscillationTolerancePatch, $ResidueAwarePatch, $SourceProvenancePatch, $TopologyCycleAccelerationPatch, $Mpl2SparseSolverPatch)) {
+    & git -C $SourceDir apply --check $Patch 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-External "git" @("-C", $SourceDir, "apply", $Patch)
+    }
+    else {
+        & git -C $SourceDir apply --reverse --check $Patch 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Patch does not match the pinned OptCuts checkout: $Patch"
+        }
+    }
+}
+Copy-Item -Force $FootprintHeader (Join-Path $SourceDir "src\ResidueFootprintEnergy.hpp")
+Copy-Item -Force $FootprintSource (Join-Path $SourceDir "src\ResidueFootprintEnergy.cpp")
 
 $CMakeText = Get-Content $CMakeLists -Raw
 if ($CMakeText -notmatch "TOPOPPI_WINDOWS_PATCH") {
@@ -66,22 +93,12 @@ if ($StbExportText -notmatch "TOPOPPI_WINDOWS_PATCH") {
 #ifndef IGL_STB_IMAGE_EXPORT_H
 #define IGL_STB_IMAGE_EXPORT_H
 
-// TOPOPPI_WINDOWS_PATCH: the vendored header uses GCC visibility attributes
-// even when CMake generates a Windows export header. The source include path
-// wins on MSVC, so provide a Windows-safe replacement before configuring.
-#if defined(_WIN32) || defined(__CYGWIN__)
-#  ifdef igl_stb_image_EXPORTS
-#    define IGL_STB_IMAGE_EXPORT __declspec(dllexport)
-#  else
-#    define IGL_STB_IMAGE_EXPORT __declspec(dllimport)
-#  endif
-#  define IGL_STB_IMAGE_NO_EXPORT
-#  define IGL_STB_IMAGE_DEPRECATED __declspec(deprecated)
-#else
-#  define IGL_STB_IMAGE_EXPORT __attribute__((visibility("default")))
-#  define IGL_STB_IMAGE_NO_EXPORT __attribute__((visibility("hidden")))
-#  define IGL_STB_IMAGE_DEPRECATED __attribute__((__deprecated__))
-#endif
+// TOPOPPI_WINDOWS_PATCH: stb_image is linked statically into the release
+// executable. The vendored source header precedes CMake's generated header,
+// so make its visibility macros static-library safe for MSVC.
+#define IGL_STB_IMAGE_EXPORT
+#define IGL_STB_IMAGE_NO_EXPORT
+#define IGL_STB_IMAGE_DEPRECATED __declspec(deprecated)
 
 #define IGL_STB_IMAGE_DEPRECATED_EXPORT IGL_STB_IMAGE_EXPORT IGL_STB_IMAGE_DEPRECATED
 #define IGL_STB_IMAGE_DEPRECATED_NO_EXPORT IGL_STB_IMAGE_NO_EXPORT IGL_STB_IMAGE_DEPRECATED
@@ -128,7 +145,29 @@ if ($MainText -notmatch "TOPOPPI_WINDOWS_PATCH") {
 }
 
 Remove-Item -Recurse -Force $BuildDir -ErrorAction SilentlyContinue
-Invoke-External "cmake" @("-S", $SourceDir, "-B", $BuildDir, "-G", "Visual Studio 17 2022", "-A", "x64")
+Invoke-External "cmake" @(
+    "-S", $SourceDir,
+    "-B", $BuildDir,
+    "-G", "Visual Studio 17 2022",
+    "-A", "x64",
+    "-DCMAKE_C_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /MT /Brepro",
+    "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /DEIGEN_MPL2_ONLY /MT /Brepro",
+    "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=/INCREMENTAL:NO /Brepro /DEBUG:NONE"
+)
+$TbbVersionFile = Join-Path $BuildDir "ext\tbb\version_string.ver"
+Set-Content -Path $TbbVersionFile -Encoding ASCII -Value @'
+#define __TBB_VERSION_STRINGS(N) \
+#N": BUILD_HOST         release-builder" ENDL \
+#N": BUILD_OS           Windows" ENDL \
+#N": BUILD_KERNEL       generic" ENDL \
+#N": BUILD_COMPILER     C++" ENDL \
+#N": BUILD_LIBC         system" ENDL \
+#N": BUILD_LD           system" ENDL \
+#N": BUILD_TARGET       native" ENDL \
+#N": BUILD_COMMAND      TopoPPI release build" ENDL
+
+#define __TBB_DATETIME "Unknown"
+'@
 Invoke-External "cmake" @("--build", $BuildDir, "--config", "Release", "--parallel")
 
 $BuiltExeCandidates = @(
@@ -142,20 +181,42 @@ if ($null -eq $BuiltExe) {
 
 $Artifact = Join-Path $OutputDir "OptCuts_bin-windows-x86_64.exe"
 Copy-Item -Force $BuiltExe $Artifact
+$ArtifactBytes = [System.IO.File]::ReadAllBytes($Artifact)
+$ArtifactText = [System.Text.Encoding]::ASCII.GetString($ArtifactBytes) +
+    [System.Text.Encoding]::Unicode.GetString($ArtifactBytes)
+foreach ($PrivatePath in @($RepoRoot, $SourceDir, $WorkRoot, "D:\a\", "\Users\runner\")) {
+    if ($ArtifactText.IndexOf($PrivatePath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "OptCuts artifact contains a private build path: $PrivatePath"
+    }
+}
+foreach ($BlockedMetadata in @("microsoft-standard", "runner\work\")) {
+    if ($ArtifactText.IndexOf($BlockedMetadata, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "OptCuts artifact contains runner-specific build metadata: $BlockedMetadata"
+    }
+}
+if ($ArtifactText -match "TBB: BUILD_OS\s+[^\r\n\x00]*\d") {
+    throw "OptCuts artifact contains a versioned TBB BUILD_OS value."
+}
+foreach ($ExpectedMetadata in @(
+    "TBB: BUILD_HOST         release-builder",
+    "TBB: BUILD_OS           Windows",
+    "TBB: BUILD_KERNEL       generic",
+    "TBB: BUILD_COMPILER     C++"
+)) {
+    if ($ArtifactText.IndexOf($ExpectedMetadata, [System.StringComparison]::Ordinal) -lt 0) {
+        throw "OptCuts artifact is missing neutral TBB metadata: $ExpectedMetadata"
+    }
+}
 $Hash = (Get-FileHash $Artifact -Algorithm SHA256).Hash.ToLower()
 "$Hash  OptCuts_bin-windows-x86_64.exe" | Set-Content "$Artifact.sha256" -Encoding ASCII
 
-if (!$SkipSmoke) {
-    $InputMesh = Join-Path $SourceDir "input\bimba_i_f10000.obj"
-    if (Test-Path $InputMesh) {
-        Push-Location $WorkRoot
-        try {
-            Invoke-External $Artifact @("100", $InputMesh, "0.999", "1", "0", "4.1", "1", "0", "windowsArtifactSmoke")
-        }
-        finally {
-            Pop-Location
-        }
-    }
+$InputMesh = Join-Path $SourceDir "input\bimba_i_f10000.obj"
+Push-Location $WorkRoot
+try {
+    Invoke-External $Artifact @("100", $InputMesh, "0.999", "1", "0", "4.1", "1", "0", "windowsArtifactSmoke")
+}
+finally {
+    Pop-Location
 }
 
 Write-Host "Built $Artifact"

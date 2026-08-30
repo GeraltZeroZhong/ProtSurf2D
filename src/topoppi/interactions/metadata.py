@@ -3,29 +3,29 @@
 from __future__ import annotations
 
 INTERACTION_TYPES = (
-    "VdWContact",
     "HydrogenBond",
+    "Ionic",
     "Hydrophobic",
     "PiStacking",
     "PiCation",
-    "CationPi",
-    "Cationic",
-    "Anionic",
     "HalogenBond",
     "MetalCoordination",
+    "PolarContact",
+    "VdWContact",
+    "Other",
 )
 
 INTERACTION_COLORS = {
-    "VdWContact": "#008080",
     "HydrogenBond": "#1f5eff",
+    "Ionic": "#d97706",
     "Hydrophobic": "#6b7280",
     "PiStacking": "#7c3aed",
     "PiCation": "#f97316",
-    "CationPi": "#ef4444",
-    "Cationic": "#f59e0b",
-    "Anionic": "#d97706",
     "HalogenBond": "#06b6d4",
     "MetalCoordination": "#7c4a24",
+    "PolarContact": "#4f8fba",
+    "VdWContact": "#008080",
+    "Other": "#9ca3af",
 }
 
 DEFAULT_ACTIVE_INTERACTION_TYPES = set(INTERACTION_TYPES)

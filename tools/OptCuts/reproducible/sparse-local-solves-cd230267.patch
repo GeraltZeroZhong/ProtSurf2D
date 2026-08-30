@@ -1,0 +1,31 @@
+diff --git a/src/TriMesh.cpp b/src/TriMesh.cpp
+index be45e46..61b4b8d 100644
+--- a/src/TriMesh.cpp
++++ b/src/TriMesh.cpp
+@@ -2376,7 +2376,7 @@ double TriMesh::computeLocalEdDec_inSplit(const std::vector<int>& path,
+         std::vector<OptCuts::Energy*> energyTerms(1, &SD);
+         std::vector<double> energyParams(1, 1.0);
+         Optimizer optimizer(localMesh, energyTerms, energyParams, 0, true, isBijective,
+-                            UV_bnds, E, bnd, true);
++                            UV_bnds, E, bnd, false);
+         optimizer.precompute();
+         optimizer.setRelGL2Tol(1.0e-6);
+         optimizer.solve(maxIter); //do not output, the other part
+@@ -2498,7 +2498,7 @@ double TriMesh::computeLocalEdDec_merge(const std::vector<int>& path,
+         std::vector<OptCuts::Energy*> energyTerms(1, &SD);
+         std::vector<double> energyParams(1, 1.0);
+         Optimizer optimizer(localMesh, energyTerms, energyParams, 0, true, isBijective,
+-                            UV_bnds, E, bnd, true);
++                            UV_bnds, E, bnd, false);
+         optimizer.precompute();
+         optimizer.setRelGL2Tol(1.0e-6);
+         optimizer.solve(maxIter); //do not output, the other part
+@@ -2771,7 +2771,7 @@ double TriMesh::computeLocalEdDec_bSplit(const std::vector<int>& splitPath,
+         std::vector<OptCuts::Energy*> energyTerms(1, &SD);
+         std::vector<double> energyParams(1, 1.0);
+         Optimizer optimizer(localMesh, energyTerms, energyParams, 0, true, !!scaffold,
+-                            UV_bnds, E, bnd, true);
++                            UV_bnds, E, bnd, false);
+         optimizer.precompute();
+         optimizer.setRelGL2Tol(1.0e-6);
+         optimizer.solve(maxIter);

@@ -12,7 +12,9 @@ $GeneratedPaths = @(
     (Join-Path $InstallDir "tmp"),
     (Join-Path $InstallDir "bin"),
     (Join-Path $InstallDir "TopoPPI GUI.cmd"),
-    (Join-Path $InstallDir "TopoPPI CLI.cmd")
+    (Join-Path $InstallDir "TopoPPI CLI.cmd"),
+    (Join-Path $InstallDir "TopoPPI Command Prompt.cmd"),
+    (Join-Path $InstallDir "gui-startup.log")
 )
 
 foreach ($Path in $GeneratedPaths) {

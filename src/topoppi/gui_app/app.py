@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
+from topoppi import __version__
 from topoppi.config import DEFAULT_GUI_CONFIG
 
 from .constants import DEFAULT_ACTIVE_TYPES, INTERACTION_COLORS, INTERACTION_TYPES
@@ -16,7 +17,7 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
     def __init__(self, root, config=DEFAULT_GUI_CONFIG):
         self.root = root
         self.config = config
-        self.root.title("TopoPPI - Mapping Protein Interaction Surfaces")
+        self.root.title(f"TopoPPI {__version__} - Protein Interface Mapping")
         self.root.geometry(f"{self.config.window_width}x{self.config.window_height}")
         self.root.minsize(self.config.min_window_width, self.config.min_window_height)
 
@@ -26,15 +27,12 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
         self._closed = False
         self._cancel_event = threading.Event()
 
-        self.cached_viz = None
-        self.cached_patches = None
         self.current_fig = None
         self.current_toolbar = None
-        self._picking = False
+        self._successful_single_run = None
         self._drag_state = None
         self.label_offsets = {}
-        self.last_run_manifest = {}
-        self.last_run_params = {}
+        self.marker_color_overrides = {}
         self.log_history = []
         self.current_run_log = []
         self.chain_residue_counts = {}
@@ -48,6 +46,7 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
         self.interaction_color_swatches = {}
 
         self._configure_style()
+        self._init_menu()
         self.paned_window = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
         self.paned_window.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         self._init_sidebar()
@@ -58,7 +57,7 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
         self._init_controls()
         self._init_plot_area()
         self._init_status_bar()
-        self._refresh_action_states()
+        self._sync_mode_controls()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(self.config.ui_poll_interval_ms, self._drain_ui_queue)
 
@@ -93,8 +92,6 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
         style.configure("TLabelframe", background="#f5f7fb", borderwidth=1, relief="solid")
         style.configure("TLabelframe.Label", background="#f5f7fb", foreground="#111827")
         style.configure("TButton", padding=(8, 5))
-        style.configure("Invalid.TEntry", fieldbackground="#fff1f2")
-        style.configure("Invalid.TCombobox", fieldbackground="#fff1f2")
         style.configure(
             "Primary.TButton",
             padding=(12, 7),
@@ -118,7 +115,9 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
             highlightthickness=0,
             background="#f5f7fb",
         )
-        self.sidebar_scrollbar = ttk.Scrollbar(self.sidebar_scroll_area, orient=tk.VERTICAL, command=self.sidebar_canvas.yview)
+        self.sidebar_scrollbar = ttk.Scrollbar(
+            self.sidebar_scroll_area, orient=tk.VERTICAL, command=self.sidebar_canvas.yview
+        )
         self.sidebar_canvas.configure(yscrollcommand=self.sidebar_scrollbar.set)
         self.sidebar_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.sidebar_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -160,12 +159,7 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
 
     def close(self):
         self._closed = True
-        try:
-            self._unbind_sidebar_wheel(None)
-        except Exception:
-            pass
-        try:
-            self._close_current_figure()
-        except Exception:
-            pass
+        self._cancel_event.set()
+        self._unbind_sidebar_wheel(None)
+        self._close_current_figure()
         self.root.destroy()

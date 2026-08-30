@@ -2,7 +2,9 @@ import json
 import os
 import shutil
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 from topoppi.benchmarking import BenchmarkRunner
 from topoppi.config import BenchmarkConfig
@@ -12,6 +14,40 @@ TINY_PDB = os.path.join(FIXTURE_DIR, "tiny_complex.pdb")
 
 
 class BenchmarkPreprocessTests(unittest.TestCase):
+    def test_cpu_affinity_is_optional_on_macos(self):
+        without_affinity = types.SimpleNamespace()
+        psutil_without_affinity = types.SimpleNamespace(Process=lambda: types.SimpleNamespace())
+        with (
+            mock.patch("topoppi.benchmarking.runner.os", without_affinity),
+            mock.patch("topoppi.benchmarking.runner.psutil", psutil_without_affinity),
+        ):
+            self.assertEqual(BenchmarkRunner._ordered_available_cpus(), [])
+
+    def test_run_reuses_cached_preflight_jobs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_root = os.path.join(tmpdir, "out")
+            runner = BenchmarkRunner(BenchmarkConfig(tmpdir, output_root))
+            runner._preflight_jobs = [{"pdb": "cached.pdb"}]
+            runner._preflight_preprocessing = {"accepted_files": 1}
+            with (
+                mock.patch.object(
+                    runner,
+                    "preflight",
+                    return_value={"ready": True, "structure_file_count": 1, "blockers": []},
+                ),
+                mock.patch.object(runner, "_prepare_benchmark_jobs") as prepare_jobs,
+                mock.patch.object(runner, "_load_resume_state", return_value=([], [])),
+                mock.patch.object(runner, "_save_checkpoint", return_value=True),
+                mock.patch.object(runner, "_resolve_worker_count", return_value=1),
+                mock.patch.object(runner, "_safe_progress"),
+                mock.patch.object(runner, "_build_output", return_value={"status": "ok"}),
+                mock.patch.object(runner, "_write_outputs"),
+            ):
+                output = runner.run()
+
+        prepare_jobs.assert_not_called()
+        self.assertEqual(output, {"status": "ok"})
+
     def test_no_valid_jobs_writes_preprocessing_report(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             shutil.copy(TINY_PDB, os.path.join(tmpdir, "tiny_complex.pdb"))

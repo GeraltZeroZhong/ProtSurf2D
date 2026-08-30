@@ -1,0 +1,10 @@
+{
+  "axes": {
+    "topology.distance_cutoff": [3.5, 4.0, 5.0],
+    "surface.grid_resolution": [0.75, 1.0, 1.25],
+    "surface.sigma": [0.75, 1.0, 1.25],
+    "surface.level": [0.05, 0.1, 0.2],
+    "optcuts.optcuts_lambda_init": [0.95, 0.99, 0.999],
+    "optcuts.optcuts_distortion_bound": [4.1, 5.0, 6.0]
+  }
+}

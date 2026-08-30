@@ -1,0 +1,143 @@
+diff --git a/src/main.cpp b/src/main.cpp
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -31,3 +31,5 @@
+ #include <fstream>
+ #include <string>
++#include <algorithm>
++#include <vector>
+ #include <ctime>
+@@ -66,6 +68,7 @@
+ int opType_queried = -1;
+ std::vector<int> path_queried;
+ Eigen::MatrixXd newVertPos_queried;
+ bool reQuery = false;
++bool forceCriticalLambdaQuery = false;
+ double filterExp_in = 0.6;
+ int inSplitTotalAmt;
+@@ -617,6 +620,64 @@ double updateLambda(double measure_bound, double lambda_SD = energyParams[0], do
+     return lambda_SD / (1.0 + lambda_SD);
+ }
+ 
++std::vector<int> topologyStateSignature(const OptCuts::TriMesh& mesh)
++{
++    // A vertex-index-independent description of which face corners share a
++    // current mesh vertex. This is the cut topology because topology edits do
++    // not change the original face order.
++    std::vector<std::vector<int>> vertexCorners(mesh.V_rest.rows());
++    for(int face = 0; face < mesh.F.rows(); ++face) {
++        for(int corner = 0; corner < mesh.F.cols(); ++corner) {
++            const int vertex = mesh.F(face, corner);
++            if(vertex < 0 || vertex >= static_cast<int>(vertexCorners.size())) {
++                return std::vector<int>();
++            }
++            vertexCorners[vertex].push_back(face * mesh.F.cols() + corner);
++        }
++    }
++
++    std::vector<std::pair<std::vector<int>, int>> groups;
++    for(int vertex = 0; vertex < static_cast<int>(vertexCorners.size()); ++vertex) {
++        if(!vertexCorners[vertex].empty()) {
++            groups.push_back(std::make_pair(vertexCorners[vertex], vertex));
++        }
++    }
++    std::sort(groups.begin(), groups.end());
++    std::vector<int> canonicalVertex(mesh.V_rest.rows(), -1);
++    std::vector<int> signature;
++    signature.push_back(static_cast<int>(groups.size()));
++    for(int group = 0; group < static_cast<int>(groups.size()); ++group) {
++        canonicalVertex[groups[group].second] = group;
++        signature.push_back(static_cast<int>(groups[group].first.size()));
++        signature.insert(
++            signature.end(), groups[group].first.begin(), groups[group].first.end());
++    }
++
++    // Cohesive-edge bookkeeping controls the next merge candidates, so it is
++    // part of the state rather than inferred only from vertex/face counts.
++    std::vector<std::vector<int>> cohesiveRows;
++    for(int row = 0; row < mesh.cohE.rows(); ++row) {
++        std::vector<int> cohesiveRow;
++        for(int column = 0; column < mesh.cohE.cols(); ++column) {
++            const int vertex = mesh.cohE(row, column);
++            if(vertex < 0 || vertex >= static_cast<int>(canonicalVertex.size()) ||
++               canonicalVertex[vertex] < 0)
++            {
++                return std::vector<int>();
++            }
++            cohesiveRow.push_back(canonicalVertex[vertex]);
++        }
++        cohesiveRows.push_back(cohesiveRow);
++    }
++    std::sort(cohesiveRows.begin(), cohesiveRows.end());
++    signature.push_back(-1);
++    signature.push_back(static_cast<int>(cohesiveRows.size()));
++    for(const std::vector<int>& row : cohesiveRows) {
++        signature.insert(signature.end(), row.begin(), row.end());
++    }
++    return signature;
++}
++
+ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence = false)
+ {
+     Eigen::MatrixXd edgeLengths; igl::edge_lengths(triSoup[channel_result]->V_rest, triSoup[channel_result]->F, edgeLengths);
+@@ -631,6 +692,44 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+     double stretch_l2, stretch_inf, stretch_shear, compress_inf;
+     triSoup[channel_result]->computeStandardStretch(stretch_l2, stretch_inf, stretch_shear, compress_inf);
+     double measure_bound = E_SD;
++
++    // Repeated inverse split/merge operations can change the dual variable too
++    // slowly to trigger the existing convergence test.  Confirm the full
++    // discrete sequence A-B-A-B, including both topology energies, before
++    // using the native critical-lambda scheme.  Candidate energies are then
++    // recomputed at the current UV map by the normal no-operation query.
++    struct CycleState {
++        std::vector<int> topology;
++        double seamEnergy;
++        double distortion;
++    };
++    static CycleState previousState = {std::vector<int>(), 0.0, 0.0};
++    static CycleState twoBackState = {std::vector<int>(), 0.0, 0.0};
++    static CycleState threeBackState = {std::vector<int>(), 0.0, 0.0};
++    static int lastCycleCheckIter = -1;
++    forceCriticalLambdaQuery = false;
++    if(iterNum != lastCycleCheckIter) {
++        const CycleState currentState = {
++            topologyStateSignature(*triSoup[channel_result]),
++            E_se,
++            E_SD
++        };
++        const double cycleTolerance = 1.0e-5;
++        forceCriticalLambdaQuery =
++            !currentState.topology.empty() &&
++            currentState.topology != previousState.topology &&
++            currentState.topology == twoBackState.topology &&
++            !previousState.topology.empty() &&
++            previousState.topology == threeBackState.topology &&
++            std::abs(currentState.seamEnergy - twoBackState.seamEnergy) <= cycleTolerance &&
++            std::abs(currentState.distortion - twoBackState.distortion) <= cycleTolerance &&
++            std::abs(previousState.seamEnergy - threeBackState.seamEnergy) <= cycleTolerance &&
++            std::abs(previousState.distortion - threeBackState.distortion) <= cycleTolerance;
++        threeBackState = twoBackState;
++        twoBackState = previousState;
++        previousState = currentState;
++        lastCycleCheckIter = iterNum;
++    }
+     const double eps_lambda = std::max(
+         1.0e-6,
+         std::min(1.0e-3, std::abs(updateLambda(measure_bound) - energyParams[0])));
+@@ -1014,8 +1106,14 @@ bool preDrawFunc(igl::opengl::glfw::Viewer& viewer)
+                         converge_preDrawFunc(viewer);
+                     }
+                     else {
++                        const double operationThreshold =
++                            forceCriticalLambdaQuery ? __DBL_MAX__ : fracThres;
++                        if(forceCriticalLambdaQuery) {
++                            logFile << "confirmed A-B-A-B topology cycle; querying critical lambda" << std::endl;
++                        }
++                        forceCriticalLambdaQuery = false;
+                         logFile << "boundary op V " << triSoup[channel_result]->V_rest.rows() << std::endl;
+-                        if(optimizer->createFracture(fracThres, false, topoLineSearch)) {
++                        if(optimizer->createFracture(operationThreshold, false, topoLineSearch)) {
+                             converged = false;
+                         }
+                         else {

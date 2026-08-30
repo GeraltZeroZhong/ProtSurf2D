@@ -1,310 +1,141 @@
 # TopoPPI
 
 <p align="center">
-  <img width="96" height="96" alt="TopoPPI icon" src="./src/topoppi/assets/topoppi.png" />
+  <img width="96" height="96" alt="TopoPPI icon" src="https://raw.githubusercontent.com/GeraltZeroZhong/TopoPPI/v1.3/src/topoppi/assets/topoppi.png" />
 </p>
 
-> **Release:** This README targets `topoppi 1.2`. The matching GitHub release tag is `v1.2`.
+TopoPPI turns a protein complex in PDB or mmCIF format into an annotated two-dimensional map of its interaction surface. The map keeps residue identity, partner contacts, interaction types, chart seams, and run provenance connected to the source structure.
 
-TopoPPI maps **protein-protein interaction (PPI) interfaces** from 3D structures into annotated 2D UV atlases. It is built for interactive inspection, reproducible figure export, and benchmark-style evaluation across structure sets.
+Use the desktop app for an interactive workflow, the `topoppi` command for repeatable single-structure runs, or `topoppi-benchmark` for dataset-scale comparisons.
 
-The toolkit includes:
+> **Current release:** [TopoPPI 1.3](https://github.com/GeraltZeroZhong/TopoPPI/releases/tag/v1.3). The application version is 1.3. Benchmark evidence bundles continue to use schema version 2.0.
 
-- a **Basic/Advanced Tkinter GUI** for single-structure analysis, interaction styling, benchmark launching, and reproducible export,
-- a **command-line pipeline** for one-shot interface map generation,
-- a **benchmark framework** for multi-structure evaluation with JSON/CSV reports,
-- optional typed interaction annotation through ProLIF, with geometric fallback when no ProLIF data is available.
+<img width="1708" height="948" alt="Sanitized TopoPPI desktop example showing the Basic workflow and an annotated interface atlas" src="https://raw.githubusercontent.com/GeraltZeroZhong/TopoPPI/v1.3/docs/assets/topoppi-gui-sanitized.png" />
 
-The pipeline loads protein chains from PDB/mmCIF files, builds a receptor surface, extracts interface patches against a partner chain, flattens patches to UV space, optimizes UVs with [**OptCuts**](https://github.com/liminchen/OptCuts), and renders annotated interface maps.
+## Choose a starting point
 
-<img width="1920" height="1032" alt="TopoPPI GUI showing the Basic workflow and interface map" src="./docs/assets/3ff22687bd403a67cd66caeacc95baee.png" />
+| Your goal | Start here |
+| --- | --- |
+| Make a first map on Windows | [Install the Windows app](#windows) and use the **Basic** page |
+| Make a first map on a Mac | [Install the macOS app](#macos) and use the **Basic** page |
+| Use Linux or automate one structure | [Install with Conda and pip](#linux) and run `topoppi` |
+| Call TopoPPI from Python | [Python API](#python-api) |
+| Compare methods across a dataset | [Benchmark a dataset](#benchmark-a-dataset) |
+| Reproduce a publication study | [Publication workflow tools](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/tools/publication/README.md) |
 
----
+## Install TopoPPI
 
-## Quick Start (GUI, shortest path)
+### Windows
 
-### Windows x86-64
-
-For Windows users, use the one-click installer from the [TopoPPI v1.2 release](https://github.com/GeraltZeroZhong/TopoPPI/releases/tag/v1.2):
+Download the 64-bit installer from the [v1.3 release](https://github.com/GeraltZeroZhong/TopoPPI/releases/tag/v1.3):
 
 ```text
-TopoPPI-1.2-windows-x86_64-setup.exe
+TopoPPI-1.3-windows-x86_64-setup.exe
 ```
 
-Download it, keep your internet connection on, double-click it, and finish the installer. It installs TopoPPI, Python, the required scientific packages, and the bundled Windows OptCuts executable into `%LOCALAPPDATA%\TopoPPI`; no separate Conda, Python, or OptCuts setup is needed. If Windows SmartScreen warns that the unsigned installer is from an unknown publisher, continue only if the file came from the official GitHub release.
+Open the installer and keep its setup window open while it creates the private environment. A fresh installation commonly takes 5–15 minutes and uses GitHub, conda-forge, and PyPI. After setup, open **TopoPPI GUI** from the Start Menu. Routine analysis of local structures can run offline.
 
-The installation process usually takes about five minutes. PowerShell windows may briefly flash during setup; this is normal, so please wait patiently. The first TopoPPI launch may also take about one minute.
+The current installer is unsigned, so Windows SmartScreen may ask you to confirm the file. Download it from the project release page, select **More info**, then select **Run anyway**. Upgrade, repair, removal, and local build instructions are in the [Windows guide](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/installer/windows/README.md).
 
-After installation, open **TopoPPI GUI** from the Windows Start Menu.
+### macOS
 
-### Linux x86-64
+Download the disk image that matches the Mac from the [v1.3 release](https://github.com/GeraltZeroZhong/TopoPPI/releases/tag/v1.3):
 
-Use Conda for the scientific stack, then install TopoPPI and OptCuts:
+```text
+TopoPPI-1.3-macos-arm64.dmg       Apple Silicon
+TopoPPI-1.3-macos-x86_64.dmg      Intel
+```
+
+Open the image, drag **TopoPPI** to **Applications**, and try to open it. The v1.3 app is ad-hoc signed and has no Apple notarization. If macOS blocks it, open **System Settings > Privacy & Security**, choose **Open Anyway** for TopoPPI, and confirm **Open**. Older macOS releases may also offer **Open** through the app's Control-click menu. Keep the preparation window open while the bundled runtime expands. Later launches reuse that runtime.
+
+The app includes Python, scientific dependencies, and native OptCuts, and supports macOS 12 or later. Startup recovery, upgrades, removal, and local build instructions are in the [macOS guide](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/installer/macos/README.md).
+
+### Linux
+
+TopoPPI currently targets Python 3.10. Create an environment, install the package, fetch OptCuts, and launch the desktop app:
 
 ```bash
-conda create -n topoppi -c conda-forge python=3.10 tk igl=2.6.* numpy scipy biopython scikit-image matplotlib trimesh networkx pillow rtree shapely openbabel mdanalysis rdkit psutil tqdm meshio pip
+conda create -n topoppi -c conda-forge \
+  python=3.10 tk igl=2.6.* numpy scipy biopython scikit-image \
+  matplotlib trimesh networkx pillow rtree shapely \
+  mdanalysis rdkit psutil tqdm meshio pip
 conda activate topoppi
-pip install "topoppi[benchmark,interactions,meshio]"
+python -m pip install "topoppi[all]==1.3"
 topoppi-install-optcuts
+command -v OptCuts_bin
 topoppi-gui
 ```
 
-### Run Your First Structure
+The downloadable OptCuts artifact currently covers Linux x86-64. Other Linux architectures can use a locally built executable through `TOPOPPI_OPTCUTS_BIN`.
 
-In the GUI:
+## Create an interface map
 
-1. Use **Basic** to load a `.pdb` or `.cif` structure file.
-2. Review detected chains and use **Swap A/B** if the surface/partner assignment is reversed.
-3. Choose which interaction types to display and adjust colors if needed.
-4. Click **Run Single Analysis** to generate and auto-save the interface map.
+### Desktop app
 
-> Note: [OptCuts](https://github.com/liminchen/OptCuts) is required by the current pipeline. The Windows installer includes the Windows OptCuts executable. PyPI wheels do not include OptCuts, so Linux x86-64 users should run `topoppi-install-optcuts` after installing TopoPPI.
+Launch `topoppi-gui`, or open the installed application on Windows or macOS.
 
----
+1. On **Basic**, choose a `.pdb`, `.cif`, or `.mmcif` structure.
+2. Review the detected protein chains and residue counts.
+3. Set **Surface chain** to the protein whose surface you want to map.
+4. Set **Partner chain** to the contacting protein. **Swap A/B** maps the opposite surface.
+5. Choose the output folder and interaction types.
+6. Select **Create Interface Map**.
 
-## Project Overview
+TopoPPI generates ProLIF annotations when no interaction JSON is supplied. The completed run writes the image, its `.topoppi.json` run record, and the generated `.prolif.json` file to the chosen output folder. Advanced settings expose the surface, topology, UV, OptCuts, labeling, and export controls.
 
-### Core workflow
+The **Help** menu shows the installed version and opens the user guide or issue tracker. During a run, the status area reports `Load`, `Surface`, `Patch`, `OptCuts`, and `Render` progress.
 
-1. **Load structure data** for Chain A (receptor/surface chain) and Chain B (ligand chain).
-2. **Generate molecular surface** for Chain A.
-3. **Extract interface patches** using a distance cutoff to Chain B atoms.
-4. **Parameterize patches** with LSCM.
-5. **Optimize UV patches** with OptCuts (required in current pipeline).
-6. **Visualize and export** annotated 2D interface maps.
+### Command line
 
-### Main entry points
-
-- `topoppi`: installed command-line pipeline.
-- `topoppi-gui`: installed Tkinter GUI.
-- `topoppi-install-optcuts`: download and install the OptCuts binary for a supported platform from the matching GitHub release.
-- `topoppi.pipeline.run_interface_mapping`: importable single-structure API.
-- `topoppi.benchmarking`: benchmark engine, metrics, aggregation, and CSV/JSON reporting.
-
-All user-facing defaults live in `topoppi.config`.
-
----
-
-## Installation & Requirements
-
-### System requirements
-
-- Python **3.10** (recommended via Conda)
-- OS with Tk support (for GUI mode)
-- **libigl Python bindings 2.6.x** (package: `igl`)
-- **ProLIF + MDAnalysis are recommended** for automatic typed interaction generation; the GUI can leave ProLIF blank and fall back to geometric heuristics if generation is unavailable
-- **OptCuts binary (`OptCuts_bin`) must be installed** and available in your PATH (or passed via `--optcuts-bin`)
-
-### Create environment from a source checkout
+The shortest command is:
 
 ```bash
-conda env create -f environment.yml
-conda activate bio3d
-pip install -e ".[benchmark,interactions,meshio]"
+topoppi path/to/complex.pdb \
+  --chain-a A \
+  --chain-b B \
+  --output interface_map.png
 ```
 
-The repository includes `pyproject.toml` for standard Python packaging and PyPI publication.
-
-### Install from PyPI
-
-```bash
-conda create -n topoppi python=3.10
-conda activate topoppi
-pip install "topoppi[benchmark,interactions,meshio]"
-topoppi-install-optcuts
-which OptCuts_bin
-```
-
-For this release, `topoppi-install-optcuts` downloads from the matching GitHub release tag, for example `v1.2`. It auto-selects Linux x86-64 or Windows x86-64 when the release provides the matching OptCuts artifact. On Linux x86-64 it also installs the required `libigl_stb_image.so` runtime library next to `OptCuts_bin`. On other platforms, build OptCuts manually and set `TOPOPPI_OPTCUTS_BIN=/absolute/path/to/OptCuts_bin`.
-
-### Windows one-click installer
-
-Windows x86-64 users can install TopoPPI without managing Conda manually by downloading the setup executable from a GitHub release:
+This creates:
 
 ```text
-TopoPPI-<version>-windows-x86_64-setup.exe
+interface_map.png
+interface_map.topoppi.json
+complex.A-B.prolif.json
 ```
 
-The installer creates an isolated TopoPPI environment under `%LOCALAPPDATA%\TopoPPI`, installs the matching TopoPPI release, installs the bundled Windows OptCuts executable, and creates Start Menu launchers for **TopoPPI GUI** and **TopoPPI CLI**.
+The generated ProLIF file is placed beside the output image. Supply an existing file with `--prolif interactions.json` when interaction evidence has already been prepared.
 
-The setup executable built by GitHub Actions embeds:
-
-```text
-OptCuts_bin-windows-x86_64.exe
-OptCuts_bin-windows-x86_64.exe.sha256
-```
-
-The same files are also attached to the GitHub release as standalone artifacts for users who prefer `topoppi-install-optcuts`.
-
-### Install [OptCuts](https://github.com/liminchen/OptCuts) binary
-
-For PyPI installs, use the installed downloader:
+For a Linux x86-64 source checkout, this small smoke run uses the included fixture and interaction record:
 
 ```bash
-topoppi-install-optcuts
+topoppi tests/fixtures/tiny_complex.pdb \
+  -A A -B B \
+  --prolif tests/fixtures/prolif_interactions.json \
+  --optcuts-bin tools/OptCuts/OptCuts_bin \
+  -o /tmp/topoppi-interface.png
 ```
 
-From a source checkout, the repository also includes a helper script that installs `tools/OptCuts/OptCuts_bin` and its Linux runtime sidecar into your active Conda environment:
+Useful defaults and options:
 
-```bash
-bash tools/OptCuts/install_optcuts.sh
-```
+| Option | Default | Purpose |
+| --- | ---: | --- |
+| `-A`, `--chain-a` | `A` | Surface protein |
+| `-B`, `--chain-b` | `B` | Partner used to locate the interface |
+| `--cutoff` | `4.0 Å` | Maximum surface-face distance to Chain B |
+| `--min-points` | `1` | Minimum interaction residues needed to display a retained patch |
+| `--residue-scope` | `interaction` | Annotate interaction residues; `patch` shows the full mapped context |
+| `--res` | `1.0 Å` | Surface grid spacing |
+| `--max-voxels` | `40,000,000` | Dense-grid allocation budget |
+| `--parameterization` | `auto` | Initial UV parameterization |
+| `--residue-fragmentation-weight` | `20` | Residue-aware seam objective strength |
+| `--optcuts-timeout` | `600 s` | OptCuts budget for each patch |
+| `--prolif` | empty | Existing ProLIF JSON |
+| `-o`, `--output` | `interface_map.png` | PNG or TIFF image path |
 
-After installation, verify:
+Run `topoppi --help` for every option and `topoppi --version` to check the active installation. Add `--show` when you want the Matplotlib window to remain open after saving.
 
-```bash
-which OptCuts_bin
-```
-
-> Required: the current pipeline does **not** support running without [OptCuts](https://github.com/liminchen/OptCuts). You can also set `TOPOPPI_OPTCUTS_BIN=/absolute/path/to/OptCuts_bin`.
-> PyPI source and wheel distributions intentionally do not include `tools/OptCuts`; `topoppi-install-optcuts` downloads the release-provided binary/runtime artifacts instead.
-
-### Python dependencies
-
-See `environment.yml` and `pyproject.toml` for the authoritative lists.
-The full Conda environment includes ProLIF/MDAnalysis for automatic interaction generation.
-
-Main dependencies include:
-
-- `numpy`, `scipy`, `matplotlib`
-- `biopython`, `scikit-image`, `trimesh`, `igl` (**2.6.x**)
-- `networkx`, `rtree`, `shapely`, `pillow`
-- optional interaction extras: `MDAnalysis`, `prolif`, `rdkit`
-
----
-
-## Usage
-
-### 1) GUI mode
-
-Launch the desktop app:
-
-```bash
-topoppi-gui
-```
-
-GUI supports:
-
-- Basic single-file analysis with structure loading, chain preview, A/B swapping, interaction filters, and color controls,
-- Advanced controls for chain IDs, cutoffs, surface parameters, OptCuts export, labels, layout, and output directories,
-- folder-level benchmark runs with explicit `resume`, `new`, and `overwrite` modes,
-- interaction-type filtering, custom colors, and style presets (`Exploration`, `Publication`, `High contrast`),
-- recent input/output path pickers,
-- inline validation before launching a run,
-- staged progress (`Load`, `Surface`, `Patch`, `OptCuts`, `Render`) and cooperative cancellation,
-- optional OptCuts frame export,
-- auto-saved figures and sidecar manifests for reproducibility.
-
-### 2) Command-line mode
-
-Run the full pipeline on a single PDB/mmCIF structure:
-
-```bash
-topoppi <input.pdb|input.cif> [options]
-```
-
-Example:
-
-```bash
-topoppi ./data/1abc.pdb -A A -B B -o interface_map.png --cutoff 9.0 --res 1.0 --sigma 1.5
-```
-
-### 3) Benchmark mode (via GUI workflow)
-
-Select **Benchmark**, choose a folder containing `.pdb` files, select a run mode, and run **Run Benchmark** in GUI.
-Benchmark preprocessing uses the configured surface/partner chain IDs for every file.
-Outputs are written under:
-
-- `benchmark_report.json`
-- `benchmark_summary.csv`
-- `benchmark_checkpoint.json` (resume support)
-
-### 4) Output artifacts (what gets written)
-
-#### Single-run CLI / GUI outputs
-
-- Main rendered interface image (default: `interface_map.png`, or your `-o/--output` value)
-- GUI single runs auto-save a figure to the selected save directory and write a `<figure>.topoppi.json` sidecar manifest
-- Auto-generated ProLIF JSON when `--prolif` is not provided (saved as `<input_basename>.<chain_a>-<chain_b>.prolif.json` beside the input file)
-
-#### Benchmark outputs
-
-- `benchmark_report.json`: full structured report with runtime worker count and config fingerprint
-- `benchmark_summary.csv`: tabular summary for all processed structures
-- `benchmark_checkpoint.json`: resume/checkpoint state
-
----
-
-## Configuration
-
-### Command-line options (`topoppi`)
-
-- `pdb_file`: input structure file (`.pdb` or `.cif`)
-- `-A, --chain-a`: receptor/surface chain ID
-- `-B, --chain-b`: ligand chain ID
-- `--prolif` (`--arpeggio` alias): optional ProLIF JSON path
-- `--cutoff`: interface distance cutoff (Å)
-- `--res`: surface grid resolution (Å)
-- `--sigma`: Gaussian smoothing sigma
-- `-o, --output` (default `interface_map.png`): output image path
-- `--optcuts-bin` (default `OptCuts_bin`): OptCuts executable path/name
-- `--patch-gap`: minimum spacing between charts in global UV atlas
-- `--show`: display the Matplotlib figure after saving
-- `-v, --verbose`: verbose logging
-
-CLI defaults are read from `topoppi.config.DEFAULT_RUN_CONFIG`; CLI runs force OptCuts headless mode so they work on display-less runners and servers.
-
-### Benchmark configuration (`BenchmarkConfig`)
-
-`topoppi.config.BenchmarkConfig` defines reusable benchmark settings, including:
-
-- input/output roots,
-- chain IDs,
-- nested surface/topology/parameterization/OptCuts configuration,
-- parallelism (`max_workers`),
-- resume behavior (`resume`),
-- minimum patch validity thresholds.
-
-### ProLIF behavior
-
-If `--prolif` is not provided (or the GUI ProLIF field is left blank), TopoPPI tries to auto-generate `<input_basename>.<chain_a>-<chain_b>.prolif.json` using MDAnalysis + ProLIF. If generation is unavailable or fails, visualization falls back to geometric interaction heuristics.
-
----
-
-## Examples
-
-### Test fixture: 1BVK
-
-The repository includes `tests/fixtures/1bvk.pdb` for smoke tests and reproducible examples.
-
-```bash
-topoppi tests/fixtures/1bvk.pdb -A A -B C -o 1bvk_interface.png
-```
-
-### CLI: basic run
-
-```bash
-topoppi ./data/complex.pdb -A A -B B -o complex_interface.png
-```
-
-### CLI: custom OptCuts binary and tighter patch gap
-
-```bash
-topoppi ./data/complex.pdb -A A -B C \
-  --optcuts-bin /usr/local/bin/OptCuts_bin \
-  --patch-gap 0.05 \
-  --output complex_interface_optcuts.png
-```
-
-### CLI: use existing ProLIF interactions
-
-```bash
-topoppi ./data/complex.pdb -A A -B B \
-  --prolif ./data/complex.prolif.json \
-  --output complex_with_prolif.png
-```
-
-### Python: run one interface map programmatically
+### Python API
 
 ```python
 from topoppi.config import TopoPPIRunConfig
@@ -312,160 +143,254 @@ from topoppi.pipeline import run_interface_mapping
 
 result = run_interface_mapping(
     TopoPPIRunConfig(
-        pdb_file="./data/complex.pdb",
+        pdb_file="complex.pdb",
         chain_a="A",
         chain_b="B",
-        output_file="complex_interface.png",
+        output_file="results/complex_A-B.png",
     )
 )
-print(result.to_dict())
+
+print(result.output_file)
+print(result.manifest_file)
+print(result.elapsed_sec)
 ```
 
-### Python: run benchmark programmatically
+Configuration dataclasses live in [`src/topoppi/config.py`](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/src/topoppi/config.py). The same settings feed the CLI, desktop app, Python pipeline, and benchmark runner.
 
-```python
-from dataclasses import replace
+Python calls require a native OptCuts executable. On Linux x86-64, run `topoppi-install-optcuts`. The [Windows installer](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/installer/windows/README.md) configures the bundled Windows executable, while standalone Windows environments can run `topoppi-install-optcuts --platform windows-x86_64`. On macOS, follow the [native build instructions](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/installer/macos/README.md#build-locally). Set `TOPOPPI_OPTCUTS_BIN` to the resulting executable when it is outside the active environment's command path.
 
-from topoppi.config import BenchmarkConfig, DEFAULT_RUN_CONFIG
-from topoppi.benchmarking import BenchmarkRunner
+## Understand the result
 
-config = BenchmarkConfig(
-    input_folder="./dataset",
-    output_root="./benchmark_results",
-    chain_a="A",
-    chain_b="B",
-    surface=replace(DEFAULT_RUN_CONFIG.surface, grid_resolution=1.0, sigma=1.0),
-    topology=replace(DEFAULT_RUN_CONFIG.topology, distance_cutoff=9.0),
-    optcuts=replace(DEFAULT_RUN_CONFIG.optcuts, optcuts_bin="OptCuts_bin").for_headless(),
-    resume=True,
-)
+```mermaid
+flowchart TB
+    accTitle: TopoPPI interface mapping workflow
+    accDescr: TopoPPI loads a complex, selects two protein chains, creates the Chain A interface surface, optimizes its residue-aware UV atlas, and exports the map with provenance.
 
-runner = BenchmarkRunner(config=config, log_fn=print)
-report = runner.run()
-print(report["summary"])
+    input(["PDB or mmCIF complex"]) --> chains["Choose surface Chain A and partner Chain B"]
+    chains --> surface["Build the Chain A molecular surface"]
+    surface --> interface["Keep faces near Chain B"]
+    interface --> patches["Prepare connected disk-like patches"]
+    patches --> uv["Optimize seams and UV coordinates"]
+    uv --> atlas["Pack and annotate the atlas"]
+    atlas --> output(["Image, interactions, and run record"])
 ```
 
----
+### Read the map
 
-## Project Structure
+- Each island is a connected piece of the selected Chain A interface surface.
+- The mesh shows the flattened surface geometry. Island boundaries include natural patch boundaries and optimization seams.
+- Residue markers belong to Chain A. Their labels can also show paired Chain B residues.
+- Marker colors encode the selected interaction classes, such as hydrogen bonds, ionic contacts, pi interactions, hydrophobic contacts, and van der Waals contacts.
+- A residue split by a seam can appear on more than one island. TopoPPI places a marker on every connected UV footprint piece.
+- Two-dimensional spacing describes the optimized atlas. Use the source structure for physical three-dimensional distance measurements.
+
+The adjacent `.topoppi.json` file records the exact input hash, chains, settings, software environment, OptCuts executable, stage timings, surface diagnostics, topology evidence, display scope, and interaction counts. Keep it with figures used in analysis or publication.
+
+### Mapping details
+
+- TopoPPI reads the first structural model and uses recognized amino-acid heavy atoms from Chain A.
+- The molecular surface is a Gaussian-density isosurface extracted with marching cubes.
+- Interface faces are selected from their distance to Chain B heavy atoms. GUI, CLI, and Python single-run defaults all use `4.0 Å` in v1.3.
+- UV coordinates are stored per face corner, so both sides of a seam keep their own coordinates.
+- Multiple retained patches are packed with deterministic transforms and an explicit chart gap.
+
+TopoPPI extends OptCuts with residue-footprint fragmentation energy. For an original footprint component with mass `M` split into pieces with masses `m_k`, the contribution is:
 
 ```text
-TopoPPI/
-├─ pyproject.toml                 # Python package metadata and console scripts
-├─ environment.yml                # Conda environment definition
-├─ docs/                          # Release and reproducibility notes
-├─ tests/                         # Lightweight smoke/unit tests
-├─ tools/
-│  └─ OptCuts/
-│     ├─ OptCuts_bin              # Source-checkout convenience executable
-│     ├─ install_optcuts.sh       # Installer script for Conda env
-│     ├─ NOTICE.md                # Binary provenance and packaging policy
-│     └─ LICENSE.txt              # OptCuts license
-├─ installer/
-│  └─ windows/                    # Inno Setup bootstrap installer
-└─ src/
-	   └─ topoppi/
-	      ├─ cli.py                   # CLI entry point
-	      ├─ config.py                # Central runtime, benchmark, GUI, and OptCuts configuration
-	      ├─ install_optcuts.py       # Release artifact downloader for OptCuts
-	      ├─ pipeline.py              # Importable single-run API
-      ├─ io/                      # PDB/mmCIF loading and chain extraction
-      ├─ mesh/                    # Surface generation, topology, parameterization
-      ├─ optimization/            # OptCuts-based UV optimization
-      ├─ interactions/            # ProLIF integration and interaction normalization
-      ├─ visualization/           # 2D interface rendering
-      ├─ atlas/                   # Atlas metrics
-      ├─ gui_app/                 # GUI mixins and application orchestration
-      └─ benchmarking/            # Benchmark runner, metrics, reporting
+1 - sum((m_k / M)^2)
 ```
 
----
+Each residue receives the weight `1 + contact degree`, where contact degree is the number of distinct Chain B partners in the ProLIF records. The standard TopoPPI weight is `20`. A weight of `0` selects the matched geometry-only ablation used in benchmark comparisons. The [benchmark schema](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/docs/benchmark_schema.md#residue-footprint-fragmentation) gives the formal definition and exported evidence.
+
+## Interaction annotations
+
+TopoPPI uses interaction evidence in this order:
+
+1. Read the ProLIF JSON supplied through the CLI, Python configuration, or Advanced desktop page.
+2. Generate a chain-pair ProLIF JSON with MDAnalysis, ProLIF, and RDKit.
+3. Use geometric interaction assignment when the user enables that diagnostic fallback.
+
+During generation, TopoPPI prepares isolated RDKit copies of the selected chains, adds explicit hydrogens, and runs the ProLIF fingerprint. Source coordinates stay unchanged. Generated metadata binds the records to the structure SHA-256, chain direction, interaction schema, and TopoPPI version.
+
+The display normalizes ProLIF subclasses into `HydrogenBond`, `Ionic`, `PiStacking`, `PiCation`, `Hydrophobic`, `HalogenBond`, `MetalCoordination`, `VdWContact`, and `Other`. PDB insertion codes are retained when they resolve uniquely.
+
+Use `--residue-scope patch` or **Full patch context** to label the surrounding flattened surface. The standard `interaction` scope labels residues supported by the resolved interaction records.
+
+## Benchmark a dataset
+
+`topoppi-benchmark` supports resumable quality studies, uncontended performance measurements, sensitivity plans, and evidence-bundle verification. Start with the small source-tree example to learn the command flow:
+
+```bash
+topoppi-benchmark preflight docs/benchmark_quickstart.example.json
+topoppi-benchmark run docs/benchmark_quickstart.example.json
+topoppi-benchmark verify benchmark_results/quickstart/benchmark_report.json
+```
+
+The default terminal output is a concise status summary. Add `--json` for the full structured result, or use `--output-json PATH` on preflight commands to write it directly.
+
+### Choose a benchmark purpose
+
+| Purpose | Measures | Formal run shape |
+| --- | --- | --- |
+| `quality` | Distortion, flips, seams, fragmentation, retention | One measured repetition, no warm-up |
+| `performance` | Wall time, memory, completion, timeouts | At least three repetitions and one warm-up on one worker |
+
+The `comparative` profile evaluates parameterizations and selected OptCuts arms on a shared source-face domain. The `operational_optcuts` profile measures one automatic OptCuts arm as an end-to-end operation.
+
+### Prepare a formal run
+
+Use these tracked files:
+
+- [formal configuration example](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/docs/benchmark_config.example.json)
+- [manifest template](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/docs/benchmark_manifest_template.csv)
+- [evidence schema and protocol](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/docs/benchmark_schema.md)
+
+Replace the example paths, commit ID, coordinate-audit digest, OptCuts digest, chains, and dataset metadata with frozen study values. A formal run then follows:
+
+```bash
+python tools/publication/prepare_manifest_prolif.py \
+  --manifest ../topoppi-study/dataset/benchmark_manifest.csv \
+  --structure-dir ../topoppi-study/dataset \
+  --output-manifest ../topoppi-study/dataset/benchmark_manifest.prolif.csv
+```
+
+Keep study inputs and generated evidence outside the source checkout. Use the prepared manifest for the coordinate audit and benchmark configuration. The command generates one chain-bound ProLIF JSON per included structure and fills the required `prolif_file` and `prolif_sha256` columns. The [publication tools guide](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/tools/publication/README.md#bind-prolif-evidence) covers paired cohorts.
+
+```bash
+topoppi-benchmark preflight benchmark_config.json \
+  --output-json benchmark_preflight.json
+
+topoppi-benchmark run benchmark_config.json \
+  --confirm-formal-benchmark
+
+topoppi-benchmark verify \
+  benchmark_results/formal_run/benchmark_report.json
+```
+
+Formal mode connects the result to an explicit manifest, clean Git commit, OptCuts SHA-256, coordinate audit, input checksums, chain pairs, and interaction declarations. Resume state uses the same configuration fingerprint.
+
+### Run a sensitivity study
+
+The baseline configuration must include `optcuts_automatic`. Create, inspect, and execute a one-factor plan with:
+
+```bash
+topoppi-benchmark plan-sensitivity \
+  benchmark_config.json \
+  docs/sensitivity_axes.example.json \
+  --design one_factor \
+  --plan-root sensitivity_study
+
+topoppi-benchmark preflight-sensitivity \
+  sensitivity_study/sensitivity_plan.json \
+  --output-json sensitivity_study/preflight.json
+
+topoppi-benchmark run-sensitivity \
+  sensitivity_study/sensitivity_plan.json \
+  --confirm-formal-benchmark
+```
+
+Supported axes include interface cutoff, grid spacing, Gaussian sigma, isovalue, OptCuts initial lambda, and distortion bound. The [sensitivity section](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/docs/benchmark_schema.md#sensitivity-plans) defines scenario IDs, design rules, and result files.
+
+### Keep the evidence bundle
+
+The main artifacts are:
+
+| Artifact | Contents |
+| --- | --- |
+| `benchmark_report.json` | Configuration, runtime, per-structure records, metric protocol, and aggregate statistics |
+| `benchmark_summary.csv` | One row for each attempted structure |
+| `benchmark_manifest.csv` | Accepted and excluded inputs, chains, hashes, and grid estimates |
+| `benchmark_failures.csv` | Preprocessing, method, timeout, and resource failures |
+| `benchmark_per_patch.csv` | Patch geometry and biological-retention evidence |
+| `benchmark_per_face_sample.csv` | Deterministic source-face audit sample |
+| `benchmark_per_residue.csv.gz` | Residue fragmentation and seam-crossing evidence |
+| `benchmark_provenance.csv.gz` | Final-to-source face, vertex, and atom mappings |
+| `benchmark_optcuts_executions.jsonl.gz` | Commands, hashes, settings, and per-patch OptCuts diagnostics |
+| `benchmark_artifact_checksums.json` | SHA-256 and byte count for the evidence artifacts |
+
+See the [schema](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/docs/benchmark_schema.md) for every field, comparison domain, missing-value rule, statistical unit, and verification check. Publication cohort preparation and paired analyses are documented in the [publication tools guide](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/tools/publication/README.md).
+
+## Install from a Linux x86-64 source checkout
+
+This procedure uses the Linux x86-64 OptCuts executable tracked in the source tree. Use the [Windows native build guide](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/installer/windows/README.md#build-locally) or [macOS native build guide](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/installer/macos/README.md#build-locally) when developing on those platforms.
+
+```bash
+git clone https://github.com/GeraltZeroZhong/TopoPPI.git
+cd TopoPPI
+conda env create -f environment.yml
+conda activate topoppi-dev
+python -m pip install -e ".[dev,benchmark,meshio]"
+bash tools/OptCuts/install_optcuts.sh
+command -v OptCuts_bin
+```
+
+The checkout includes a Linux x86-64 OptCuts executable for development. Rebuild the pinned residue-aware source with:
+
+```bash
+bash tools/OptCuts/build_residue_aware_optcuts.sh \
+  tools/OptCuts/OptCuts_bin
+```
+
+The [OptCuts notice](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/tools/OptCuts/NOTICE.md) records the upstream commit, patch behavior, executable SHA-256, platform distribution, and license. The [residue-aware integration guide](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/tools/OptCuts/residue_aware/README.md) documents the sidecar and C++ state engine.
+
+TopoPPI resolves the executable from `TOPOPPI_OPTCUTS_BIN`, the configured path or command name, then the active `PATH`. Point to a local build with:
+
+```bash
+export TOPOPPI_OPTCUTS_BIN=/absolute/path/to/OptCuts_bin
+```
 
 ## Troubleshooting
 
-### `OptCuts_bin` not found
+### OptCuts cannot be found
 
-Symptoms:
-- CLI/GUI fails when entering optimization stage
-- `which OptCuts_bin` returns empty
-
-Fix:
+In a pip or Conda installation:
 
 ```bash
+conda activate topoppi
 topoppi-install-optcuts
-which OptCuts_bin
+command -v OptCuts_bin
 ```
 
-From a source checkout, this also works:
+In a Linux x86-64 source checkout, run `bash tools/OptCuts/install_optcuts.sh`. Use `topoppi-install-optcuts --force` to replace the executable at the selected destination. Windows and macOS users should follow the native OptCuts guidance in the [Python API section](#python-api).
+
+### A chain is missing
+
+TopoPPI reports the available protein chains from the first model. Check capitalization, choose two distinct chains, and use **Swap A/B** when the intended surface is currently the partner. The desktop chain preview also shows residue counts.
+
+### No interface patch is found
+
+Confirm that the file contains the intended biological assembly and chain pair. Compare the partner distance with the `4.0 Å` interface cutoff and increase `--cutoff` gradually for a wider coordinate gap.
+
+### ProLIF generation fails
+
+Check that both chains contain complete protein residues and that the interaction stack imports:
 
 ```bash
-bash tools/OptCuts/install_optcuts.sh
-which OptCuts_bin
+python -c "import MDAnalysis, prolif, rdkit; print('interaction stack ready')"
 ```
 
-If still missing, pass an explicit binary path:
+You can supply a prepared record with `--prolif FILE`. For a distance-based diagnostic, enable `--geometric-interaction-fallback`.
+
+### Surface generation reaches the voxel budget
+
+Single runs can coarsen the grid up to `--max-adaptive-resolution`. Increase `--res`, raise `--max-adaptive-resolution`, or increase `--max-voxels` when memory permits. Formal fixed-resolution studies should record the chosen budget in their configuration and preflight report.
+
+### The desktop app does not start
+
+- Windows startup errors are written to `%LOCALAPPDATA%\TopoPPI\gui-startup.log`; follow the [repair steps](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/installer/windows/README.md#repair-an-installation).
+- macOS startup errors are written to `~/Library/Logs/TopoPPI/launcher.log`; follow the [runtime rebuild steps](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/installer/macos/README.md#repair-startup).
+- Linux users can start `topoppi-gui` from a terminal to see the active environment and import error.
+
+## Develop, cite, and license
+
+Run the project checks with:
 
 ```bash
-topoppi <input.pdb|input.cif> -A <chainA> -B <chainB> --optcuts-bin /absolute/path/to/OptCuts_bin
+conda activate topoppi-dev
+python -m pytest
+python -m ruff check .
 ```
 
-### Windows setup fails while installing OptCuts
+The complete contribution workflow is in [CONTRIBUTING.md](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/CONTRIBUTING.md). Cite TopoPPI with [CITATION.cff](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/CITATION.cff).
 
-Symptoms:
-- The setup executable creates the Python environment but stops during `topoppi-install-optcuts`
-- The error mentions `OptCuts_bin-windows-x86_64.exe`
-
-Fix:
-- Download the setup executable produced by the `Windows Installer` workflow; it embeds the Windows OptCuts executable.
-- Confirm the GitHub release also contains both `OptCuts_bin-windows-x86_64.exe` and `OptCuts_bin-windows-x86_64.exe.sha256` for fallback installs.
-- If you built OptCuts yourself, set `TOPOPPI_OPTCUTS_BIN` to the absolute path of your `OptCuts_bin.exe`
-
-### Linux OptCuts shared library error
-
-Symptoms:
-- The error mentions `libigl_stb_image.so: cannot open shared object file`
-
-Fix:
-- Re-run `topoppi-install-optcuts --force`; it installs both `OptCuts_bin` and `libigl_stb_image.so`.
-- From a source checkout, run `bash tools/OptCuts/install_optcuts.sh` again so the sidecar is copied next to `OptCuts_bin`.
-
-### ProLIF/MDAnalysis import errors
-
-Symptoms:
-- Import errors for `prolif` or `MDAnalysis`
-
-Fix:
-- Recreate environment from `environment.yml`
-- Confirm packages are installed in the active env
-
-```bash
-conda env create -f environment.yml
-conda activate bio3d
-python -c "import MDAnalysis, prolif; print('ok')"
-```
-
-### `igl` / libigl compatibility issues
-
-Symptoms:
-- Import failures or runtime issues in geometry/parameterization stages
-
-Fix:
-- Use the project environment and keep `igl` in the documented `2.6.x` range.
-
----
-
-## Changelog
-
-- **v1.2** adds Windows x86-64 installer scaffolding and Windows-aware OptCuts artifact installation, plus Linux OptCuts runtime sidecar handling.
-- **v1.1** adds improved GUI workflows, benchmark reporting, reproducibility manifests, PyPI packaging, and one-command Linux x86-64 OptCuts installation.
-- **v1.0** is the initial public release of TopoPPI.
-
-See [CHANGELOG.md](./CHANGELOG.md) for release history.
-
----
-
-## License
-
-This project is distributed under the terms of the **MIT License**. See [LICENSE](./LICENSE).
-
-The source checkout includes a Linux x86-64 OptCuts binary and runtime sidecar for convenience. They are not included in the Python package distribution; see [`tools/OptCuts/NOTICE.md`](./tools/OptCuts/NOTICE.md) and [`tools/OptCuts/LICENSE.txt`](./tools/OptCuts/LICENSE.txt) before redistributing binary artifacts.
+TopoPPI is distributed under the [MIT License](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/LICENSE). OptCuts redistribution details are in the [build and license notice](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/tools/OptCuts/NOTICE.md) and its upstream [`LICENSE.txt`](https://github.com/GeraltZeroZhong/TopoPPI/blob/v1.3/tools/OptCuts/LICENSE.txt).

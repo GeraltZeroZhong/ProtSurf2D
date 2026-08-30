@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
+import argparse
+from collections.abc import Sequence
+
+from topoppi import __version__
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="topoppi-gui",
+        description="Open the TopoPPI desktop application.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    return parser
+
 
 def _set_window_icon(root) -> None:
     """Set the Tk window icon when packaged assets are available."""
@@ -19,12 +33,13 @@ def _set_window_icon(root) -> None:
             icon_image = tk.PhotoImage(file=str(icon_path))
         root.iconphoto(True, icon_image)
         root._topoppi_icon_image = icon_image
-    except Exception:
-        # A missing icon should not prevent the GUI from starting.
+    except (FileNotFoundError, ModuleNotFoundError, OSError, tk.TclError):
         return
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    build_parser().parse_args(argv)
+
     import tkinter as tk
 
     import matplotlib

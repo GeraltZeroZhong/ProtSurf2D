@@ -1,27 +1,49 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
 import os
 import re
 import shutil
 import subprocess
 import tempfile
 import time
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 import trimesh
 from PIL import Image
+from scipy.spatial import cKDTree
 
-try:
-    import meshio
-except Exception:  # optional dependency
-    meshio = None
-
-from topoppi.atlas.metrics import UVAtlasMetrics
+from topoppi.atlas.footprints import (
+    residue_fragmentation_report,
+    write_residue_footprint_sidecar,
+)
+from topoppi.atlas.metrics import UVAtlasMetrics, weighted_stats
+from topoppi.atlas.packing import apply_packed_uv, pack_mesh_charts, resolved_chart_gap
+from topoppi.atlas.uv import as_corner_uv, set_uv_layout, uv_checksum
 from topoppi.config import OptCutsConfig
+from topoppi.file_utils import sha256_file
+from topoppi.install_optcuts import (
+    LINUX_X86_64_SHA256,
+    OPTCUTS_AUDITED_UPSTREAM_COMMIT,
+    OPTCUTS_UPSTREAM_URL,
+)
+from topoppi.mesh.provenance import OPTCUTS_GEOMETRY_VERTEX_IDS
 
 logger = logging.getLogger("UVOOptimizer")
+_RESIDUE_AWARE_MARKER = b"residue footprint energy enabled"
+
+
+@dataclass(frozen=True)
+class ParsedOBJUV:
+    vertices: np.ndarray
+    faces: np.ndarray
+    texcoords: np.ndarray
+    face_texcoord_indices: np.ndarray
+    corner_uv: np.ndarray
 
 
 def resolve_optcuts_binary(config: OptCutsConfig) -> Optional[str]:
@@ -32,61 +54,155 @@ def resolve_optcuts_binary(config: OptCutsConfig) -> Optional[str]:
         resolved_bin = bin_path
     else:
         local_bin = os.path.abspath(bin_path)
-        resolved_bin = local_bin if os.path.exists(local_bin) else shutil.which(bin_path)
-    if not resolved_bin or not os.path.exists(resolved_bin):
+        resolved_bin = local_bin if os.path.isfile(local_bin) else shutil.which(bin_path)
+    if not resolved_bin or not os.path.isfile(resolved_bin):
         return None
     return os.path.abspath(resolved_bin)
 
 
+def supports_residue_footprint_energy(binary_path: str) -> bool:
+    """Return whether an OptCuts executable advertises the optional energy."""
+
+    with open(binary_path, "rb") as handle:
+        return _RESIDUE_AWARE_MARKER in handle.read()
+
+
 class OptCutsUVOptimizer:
-    """OptCuts-only UV optimizer (no alternating U/S/G loop, no fallback path)."""
+    """OptCuts UV optimizer with explicit initialization and seam-safe output."""
 
     def __init__(self, config: Optional[OptCutsConfig] = None, cancel_event=None):
         self.config = config or OptCutsConfig()
-        self.config.validate()
         self.last_report: Dict[str, object] = {}
         self.cancel_event = cancel_event
+        self._binary: tuple[str, str] | None = None
 
     def _check_cancelled(self) -> None:
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise RuntimeError("OptCuts cancelled by user.")
 
-    def optimize_patches(self, patches: List[trimesh.Trimesh]) -> List[trimesh.Trimesh]:
+    def preflight_binary(self) -> Dict[str, str]:
+        """Resolve and verify the executable once for this optimizer instance."""
+
+        resolved, digest = self._resolved_binary()
+        return {
+            "requested": os.environ.get(self.config.optcuts_env_var, self.config.optcuts_bin),
+            "resolved": resolved,
+            "sha256": digest,
+            "env_var": self.config.optcuts_env_var,
+        }
+
+    def optimize_patches(
+        self,
+        patches: List[trimesh.Trimesh],
+        *,
+        initialization: Optional[str] = None,
+        pack: bool = True,
+        build_report: bool = True,
+        source_residue_labels: Sequence[str] | None = None,
+        residue_weights: Mapping[str, float] | None = None,
+        timeout_sec: float | None = None,
+    ) -> List[trimesh.Trimesh]:
         start_ts = time.perf_counter()
         if not patches:
             self.last_report = {"status": "empty_input"}
             return patches
 
+        init_mode = initialization or ("provided" if self.config.use_input_uv else "automatic")
+        if init_mode not in {"provided", "automatic"}:
+            raise ValueError("OptCuts initialization must be 'provided' or 'automatic'.")
+        residue_aware = float(self.config.residue_fragmentation_weight) > 0.0
+        if residue_aware and source_residue_labels is None:
+            raise ValueError("source_residue_labels are required when residue_fragmentation_weight is positive.")
+        effective_timeout = float(self.config.timeout_sec if timeout_sec is None else timeout_sec)
+        if not math.isfinite(effective_timeout) or effective_timeout <= 0.0:
+            raise ValueError("OptCuts timeout_sec must be finite and positive.")
+
         for idx, patch in enumerate(patches):
             self._check_cancelled()
-            uv = patch.metadata.get("uv")
-            if uv is None:
-                raise RuntimeError(f"Patch {idx} is missing initial UV before OptCuts.")
+            reference_uv = None
+            if init_mode == "provided":
+                try:
+                    reference_uv = as_corner_uv(patch, key="uv")
+                except ValueError as exc:
+                    raise RuntimeError(f"Patch {idx} is missing initial UV before OptCuts.") from exc
             patch_vertex_count = int(len(patch.vertices))
             patch_face_count = int(len(patch.faces))
 
             t0 = time.perf_counter()
-            opt_uv = self._run_optcuts_for_patch(patch, uv, patch_index=idx)
+            opt_uv, execution = self._run_optcuts_for_patch(
+                patch,
+                reference_uv,
+                patch_index=idx,
+                source_residue_labels=source_residue_labels,
+                residue_weights=residue_weights,
+                timeout_sec=effective_timeout,
+            )
             self._check_cancelled()
             elapsed_patch = time.perf_counter() - t0
-            patch.metadata["uv_optcuts"] = opt_uv
-            patch.metadata["uv"] = opt_uv
-            patch.metadata["uv_global"] = opt_uv.copy()
+            set_uv_layout(patch, opt_uv, key="uv_optcuts")
+            set_uv_layout(patch, opt_uv, key="uv")
+            if residue_aware:
+                footprint_report = residue_fragmentation_report(
+                    [patch],
+                    source_residue_labels,
+                    uv_key="uv_optcuts",
+                    objective_weights=residue_weights,
+                )
+                execution["residue_aware_objective"].update(
+                    {
+                        "final_objective_weighted_fragmentation": footprint_report["objective_weighted_fragmentation"],
+                        "final_area_weighted_fragmentation": footprint_report["area_weighted_fragmentation"],
+                        "final_nonseparating_seam_crossing_edge_count": footprint_report["nonlocality_audit"][
+                            "nonseparating_seam_crossing_edge_count"
+                        ],
+                    }
+                )
             patch.metadata["optcuts_runtime_sec"] = float(elapsed_patch)
+            patch.metadata["optcuts_execution"] = execution
+            patch.metadata["optcuts_initialization"] = init_mode
             logger.info(
-                "OptCuts patch %d done in %.3fs (verts=%d, faces=%d, quick=%s).",
+                "OptCuts patch %d done in %.3fs (verts=%d, faces=%d, quick=%s, initialization=%s).",
                 idx,
                 elapsed_patch,
                 patch_vertex_count,
                 patch_face_count,
                 bool(self.config.optcuts_quick_mode),
+                init_mode,
             )
 
-        elapsed = time.perf_counter() - start_ts
-        self.last_report = self._build_report(patches=patches, iteration_time=elapsed)
+        packing_report = {"status": "disabled", "chart_count": len(patches)}
+        if pack:
+            packed_uv, transforms, packing_report = pack_mesh_charts(
+                patches,
+                key="uv_optcuts",
+                gap=self.config.patch_gap,
+            )
+            apply_packed_uv(patches, packed_uv, transforms, key="uv_global")
+        elif build_report:
+            for patch in patches:
+                set_uv_layout(patch, as_corner_uv(patch, key="uv_optcuts"), key="uv_global")
+
+        if not build_report:
+            self.last_report = {}
+            return patches
+
+        self.last_report = self._build_report(
+            patches=patches,
+            iteration_time=time.perf_counter() - start_ts,
+            packing_report=packing_report,
+        )
+        self.last_report["status"] = "ok"
+        self.last_report["treatment"] = (
+            "provided_uv_initialized_optcuts" if init_mode == "provided" else "optcuts_automatic_initialization"
+        )
+        self.last_report["initialization"] = init_mode
         self.last_report["optcuts_runtime"] = {
             "quick_mode": bool(self.config.optcuts_quick_mode),
             "total_patch_count": int(len(patches)),
+        }
+        self.last_report["residue_aware_objective"] = {
+            "enabled": residue_aware,
+            "residue_fragmentation_weight": float(self.config.residue_fragmentation_weight),
         }
         for p in patches:
             p.metadata["joint_opt_report"] = self.last_report
@@ -96,51 +212,60 @@ class OptCutsUVOptimizer:
         self,
         patches: List[trimesh.Trimesh],
         iteration_time: float,
+        packing_report: Dict[str, object],
     ) -> Dict[str, object]:
-        uv_list = [p.metadata.get("uv_global", p.metadata.get("uv")) for p in patches if p.metadata.get("uv") is not None]
-
         flip_vals = []
-        dist_vals = []
-        angle_vals = []
-        area_vals = []
-        seam_total = 0.0
+        dist_samples = []
+        angle_samples = []
+        area_samples = []
+        patch_weights = []
+        seam_stats = []
         for p in patches:
-            uv = p.metadata.get("uv_global", p.metadata.get("uv"))
-            if uv is None:
-                continue
+            uv = as_corner_uv(p, key="uv_optcuts")
+            patch_weights.append(float(p.area))
             flip_vals.append(UVAtlasMetrics.flip_rate(p, uv))
-            dist_vals.append(UVAtlasMetrics.distortion_stats(p, uv))
-            angle_vals.append(UVAtlasMetrics.angle_distortion_stats(p, uv))
-            area_vals.append(UVAtlasMetrics.area_distortion_stats(p, uv))
-            seam_total += 0.0
+            dist_samples.append(UVAtlasMetrics.distortion_samples(p, uv))
+            angle_samples.append(UVAtlasMetrics.angle_distortion_samples(p, uv))
+            area_samples.append(UVAtlasMetrics.area_distortion_samples(p, uv))
+            seam_stats.append(UVAtlasMetrics.seam_stats(p, uv))
 
-        def _agg(stats_list, key):
-            vals = [s[key] for s in stats_list] if stats_list else []
-            return float(np.mean(vals)) if vals else float("inf")
+        def _aggregate_samples(samples):
+            values = np.concatenate([np.asarray(item[0], dtype=np.float64) for item in samples])
+            weights = np.concatenate([np.asarray(item[1], dtype=np.float64) for item in samples])
+            return weighted_stats(values, weights)
 
-        overlap_area = UVAtlasMetrics.atlas_bbox_overlap_area(uv_list) if uv_list else 0.0
-        padding_viol = UVAtlasMetrics.padding_violations(uv_list, self.config.patch_gap) if uv_list else 0
-        utilization = UVAtlasMetrics.atlas_utilization(uv_list) if uv_list else 0.0
+        atlas_stats = UVAtlasMetrics.atlas_geometry_stats(
+            patches,
+            key="uv_global",
+            padding=resolved_chart_gap(patches, self.config.patch_gap),
+        )
+        total_area = float(np.sum(patch_weights))
 
         return {
             "parameterization_quality": {
-                "flip_rate_mean": float(np.mean(flip_vals)) if flip_vals else 1.0,
-                "distortion": {"mean": _agg(dist_vals, "mean"), "max": _agg(dist_vals, "max"), "p95": _agg(dist_vals, "p95")},
-                "angle_distortion": {"mean": _agg(angle_vals, "mean"), "max": _agg(angle_vals, "max"), "p95": _agg(angle_vals, "p95")},
-                "area_distortion": {"mean": _agg(area_vals, "mean"), "max": _agg(area_vals, "max"), "p95": _agg(area_vals, "p95")},
+                "flip_rate_mean": float(np.average(flip_vals, weights=patch_weights)),
+                "distortion": _aggregate_samples(dist_samples),
+                "angle_distortion": {**_aggregate_samples(angle_samples), "unit": "radian"},
+                "area_distortion": _aggregate_samples(area_samples),
+                "aggregation": "original_3d_face_area_weighted_across_all_patches",
             },
             "topology_complexity": {
-                "seam_total_length": float(seam_total),
-                "chart_count": int(len(uv_list)),
+                "seam_edge_count": int(sum(int(item["seam_edge_count"]) for item in seam_stats)),
+                "seam_length_3d": float(sum(float(item["seam_length_3d"]) for item in seam_stats)),
+                "seam_length_3d_normalized": float(
+                    sum(float(item["seam_length_3d"]) for item in seam_stats) / np.sqrt(total_area)
+                ),
+                "boundary_length_3d": float(sum(float(item["boundary_length_3d"]) for item in seam_stats)),
+                "chart_count": int(len(patches)),
             },
             "atlas_usability": {
-                "overlap_area": float(overlap_area),
-                "padding_violations": int(padding_viol),
-                "utilization": float(utilization),
+                **atlas_stats,
+                "packing": packing_report,
             },
             "stability_efficiency": {
-                "objective_history": [],
-                "objective_drop": 0.0,
+                "objective_history": None,
+                "objective_drop": None,
+                "objective_trace_status": "not_collected_from_optcuts",
                 "total_time_sec": float(iteration_time),
                 "failure_rate": 0.0,
             },
@@ -149,16 +274,74 @@ class OptCutsUVOptimizer:
     def get_last_report(self) -> Dict[str, object]:
         return dict(self.last_report)
 
-    def _run_optcuts_for_patch(self, patch: trimesh.Trimesh, reference_uv: np.ndarray, patch_index: int) -> np.ndarray:
-        bin_path = os.environ.get(self.config.optcuts_env_var, self.config.optcuts_bin)
-        resolved_bin = resolve_optcuts_binary(self.config)
-        if not resolved_bin:
-            raise RuntimeError(f"OptCuts binary not found: {bin_path}")
+    def _run_optcuts_for_patch(
+        self,
+        patch: trimesh.Trimesh,
+        reference_uv: Optional[np.ndarray],
+        patch_index: int,
+        timeout_sec: float,
+        source_residue_labels: Sequence[str] | None = None,
+        residue_weights: Mapping[str, float] | None = None,
+    ) -> tuple[np.ndarray, Dict[str, object]]:
+        effective_timeout = float(timeout_sec)
+        bijectivity_enabled = (
+            self.config.optcuts_quick_use_bijectivity
+            if self.config.optcuts_quick_mode
+            else self.config.optcuts_use_bijectivity
+        )
+        initial_injectivity = None
+        source_initial_injectivity = None
+        source_initial_uv_checksum = None
+        provided_uv_transform = "not_applicable"
+        if reference_uv is not None:
+            source_initial_uv_checksum = uv_checksum(patch, reference_uv)
+            source_initial_injectivity = UVAtlasMetrics.parameterization_injectivity_stats(
+                patch,
+                reference_uv,
+            )
+            reference_uv = as_corner_uv(patch, reference_uv).copy()
+            if source_initial_injectivity["global_reflection_required_for_positive_orientation"]:
+                reference_uv[..., 0] *= -1.0
+                provided_uv_transform = "global_u_reflection_for_optcuts_positive_orientation"
+                initial_injectivity = UVAtlasMetrics.parameterization_injectivity_stats(
+                    patch,
+                    reference_uv,
+                )
+            else:
+                provided_uv_transform = "identity"
+                initial_injectivity = source_initial_injectivity
+            if bijectivity_enabled and not initial_injectivity["globally_injective"]:
+                raise RuntimeError(
+                    "Provided UV is not globally injective and cannot initialize "
+                    "OptCuts with bijectivity enabled "
+                    f"(flipped_faces={initial_injectivity['flip_face_count']}, "
+                    f"overdraw_ratio={initial_injectivity['overdraw_ratio']:.6g})."
+                )
+        resolved_bin, binary_sha256 = self._resolved_binary()
 
         try:
             with tempfile.TemporaryDirectory(prefix="optcuts_") as tmpdir:
                 in_obj = os.path.join(tmpdir, "patch_in.obj")
-                patch.export(in_obj)
+                input_geometry = self._write_obj_with_uv(patch, in_obj, reference_uv)
+                fragmentation_weight = float(self.config.residue_fragmentation_weight)
+                residue_aware = fragmentation_weight > 0.0
+                footprint_metadata: dict[str, object] | None = None
+                footprint_sidecar: str | None = None
+                if residue_aware:
+                    footprint_sidecar = os.path.join(tmpdir, "residue_footprints.txt")
+                    initial_uv = (
+                        reference_uv
+                        if reference_uv is not None
+                        else np.zeros((len(patch.vertices), 2), dtype=np.float64)
+                    )
+                    footprint_metadata = write_residue_footprint_sidecar(
+                        patch,
+                        initial_uv,
+                        source_residue_labels,
+                        footprint_sidecar,
+                        residue_weights=residue_weights,
+                        input_source_vertices=input_geometry["footprint_topology_vertex_ids"],
+                    )
 
                 # The bundled binary is invoked via positional parameters (see tools/OptCuts/install_optcuts.sh).
                 # Keep the output inside the temporary directory by setting cwd.
@@ -172,63 +355,199 @@ class OptCutsUVOptimizer:
                     if self.config.optcuts_quick_mode
                     else self.config.optcuts_distortion_bound
                 )
-                bijectivity_enabled = (
-                    self.config.optcuts_quick_use_bijectivity
-                    if self.config.optcuts_quick_mode
-                    else self.config.optcuts_use_bijectivity
-                )
                 cmd = [
                     resolved_bin,
                     str(int(self.config.optcuts_mode)),  # mode
-                    in_obj,      # input mesh path
-                    f"{float(lambda_init):.6g}",  # lambda_init
+                    in_obj,  # input mesh path
+                    f"{float(lambda_init):.17g}",  # lambda_init
                     str(int(self.config.optcuts_prog_mode)),  # testID
                     str(int(self.config.optcuts_method_type)),  # methodType
-                    f"{float(distortion_bound):.6g}",  # distortionBound
+                    f"{float(distortion_bound):.17g}",  # distortionBound
                     str(int(bijectivity_enabled)),  # useBijectivity
                     str(int(self.config.optcuts_initial_cut_option)),
                     self.config.optcuts_output_tag,  # output tag
                 ]
                 proc_env = os.environ.copy()
+                proc_env.pop("TOPOPPI_FOOTPRINT_SIDECAR", None)
+                proc_env.pop("TOPOPPI_FRAGMENTATION_WEIGHT", None)
+                if residue_aware:
+                    proc_env["TOPOPPI_FOOTPRINT_SIDECAR"] = str(footprint_sidecar)
+                    proc_env["TOPOPPI_FRAGMENTATION_WEIGHT"] = f"{fragmentation_weight:.17g}"
                 if int(self.config.optcuts_mode) >= int(self.config.optcuts_headless_mode):
-                    # Defensive hardening for benchmark/headless runs: make sure no GUI backend
-                    # is inherited even when running inside an environment with DISPLAY set.
+                    # Headless mode must not inherit an interactive display backend.
                     proc_env.pop("DISPLAY", None)
                     proc_env.pop("WAYLAND_DISPLAY", None)
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tmpdir, env=proc_env)
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tmpdir, env=proc_env
+                )
+                child_cpu_affinity = (
+                    sorted(os.sched_getaffinity(proc.pid)) if hasattr(os, "sched_getaffinity") else None
+                )
+                process_started = time.perf_counter()
                 while True:
                     try:
-                        _stdout, stderr = proc.communicate(timeout=0.1)
+                        stdout, stderr = proc.communicate(timeout=0.1)
                         break
                     except subprocess.TimeoutExpired:
+                        if time.perf_counter() - process_started > effective_timeout:
+                            self._stop_process(proc)
+                            raise RuntimeError(f"OptCuts timed out after {effective_timeout:.1f}s.") from None
                         if self.cancel_event is not None and self.cancel_event.is_set():
-                            proc.terminate()
-                            try:
-                                proc.communicate(timeout=3)
-                            except subprocess.TimeoutExpired:
-                                proc.kill()
-                                proc.communicate(timeout=3)
+                            self._stop_process(proc)
                             raise RuntimeError("OptCuts cancelled by user.") from None
                 if proc.returncode != 0:
                     raise RuntimeError(f"OptCuts failed (code={proc.returncode}): {stderr.strip()}")
-
                 out_obj = self._locate_optcuts_output_obj(tmpdir)
                 if not os.path.exists(out_obj):
                     raise RuntimeError(f"OptCuts output OBJ not found: {out_obj}")
 
-                uv = self._read_uv_from_obj(out_obj, expected_vertex_count=len(reference_uv))
-                if uv is None:
+                parsed = self._parse_obj_uv(out_obj)
+                if parsed is None:
                     raise RuntimeError(f"Failed to parse UV from OptCuts output: {out_obj}")
-
-                if len(uv) != len(reference_uv):
-                    raise RuntimeError(f"OptCuts UV vertex count mismatch ({len(uv)} vs {len(reference_uv)})")
+                uv = self._align_output_corners(patch, parsed)
+                output_injectivity = UVAtlasMetrics.parameterization_injectivity_stats(patch, uv)
+                if bijectivity_enabled and not output_injectivity["globally_injective"]:
+                    raise RuntimeError(
+                        "OptCuts returned a UV map that violates the enabled global "
+                        "bijectivity constraint "
+                        f"(flipped_faces={output_injectivity['flip_face_count']}, "
+                        f"overdraw_ratio={output_injectivity['overdraw_ratio']:.6g})."
+                    )
+                output_constraint_energy = UVAtlasMetrics.optcuts_constraint_energy(
+                    patch,
+                    uv,
+                )
+                constraint_tolerance = max(1.0e-6, 1.0e-6 * float(distortion_bound))
+                constraint_satisfied = bool(
+                    np.isfinite(output_constraint_energy)
+                    and output_constraint_energy <= float(distortion_bound) + constraint_tolerance
+                )
+                if not constraint_satisfied:
+                    raise RuntimeError(
+                        "OptCuts returned a UV map outside the requested distortion "
+                        "constraint "
+                        f"({output_constraint_energy:.9g} > {float(distortion_bound):.9g} "
+                        f"+ {constraint_tolerance:.3g} tolerance)."
+                    )
 
                 self._maybe_export_optcuts_frames(tmpdir=tmpdir, patch_index=patch_index)
-                return uv
-        except Exception as exc:
-            if isinstance(exc, RuntimeError):
-                raise
+                input_source_vertices = np.asarray(
+                    input_geometry["footprint_topology_vertex_ids"],
+                    dtype=np.int64,
+                )
+                input_geometry_report = {
+                    key: value
+                    for key, value in input_geometry.items()
+                    if key
+                    not in {
+                        "source_vertex_ids",
+                        "footprint_topology_vertex_ids",
+                    }
+                }
+                input_geometry_report.update(
+                    {
+                        "footprint_topology_vertex_id_count": int(len(input_source_vertices)),
+                        "unique_footprint_topology_vertex_id_count": int(len(np.unique(input_source_vertices))),
+                        "footprint_topology_vertex_ids_sha256": hashlib.sha256(
+                            np.ascontiguousarray(input_source_vertices).tobytes()
+                        ).hexdigest(),
+                    }
+                )
+                execution = {
+                    "status": "ok",
+                    "initialization": "provided_uv" if reference_uv is not None else "optcuts_automatic",
+                    "initial_uv_checksum": uv_checksum(patch, reference_uv) if reference_uv is not None else None,
+                    "source_initial_uv_checksum": source_initial_uv_checksum,
+                    "provided_uv_transform": provided_uv_transform,
+                    "source_initial_uv_injectivity": source_initial_injectivity,
+                    "initial_uv_injectivity": initial_injectivity,
+                    "input_obj_sha256": sha256_file(in_obj),
+                    "input_geometry": input_geometry_report,
+                    "output_obj_sha256": sha256_file(out_obj),
+                    "output_uv_checksum": uv_checksum(patch, uv),
+                    "output_uv_injectivity": output_injectivity,
+                    "output_distortion_constraint": {
+                        "satisfied": constraint_satisfied,
+                        "energy": float(output_constraint_energy),
+                        "bound": float(distortion_bound),
+                        "numeric_tolerance": float(constraint_tolerance),
+                        "identity_value": 4.0,
+                        "scale_alignment": "raw_optcuts_output_uv",
+                        "aggregation": "original_3d_face_area_weighted_mean",
+                        "formula": "||J||_F^2 + ||J^-1||_F^2",
+                    },
+                    "binary_path": resolved_bin,
+                    "binary_sha256": binary_sha256,
+                    "cpu_affinity": child_cpu_affinity,
+                    "upstream_reference": {
+                        "repository": OPTCUTS_UPSTREAM_URL,
+                        "audited_commit": OPTCUTS_AUDITED_UPSTREAM_COMMIT,
+                        "matches_packaged_linux_binary": binary_sha256 == LINUX_X86_64_SHA256,
+                        "note": "Custom binaries require independent source/build provenance.",
+                    },
+                    "command": [os.path.basename(resolved_bin), *cmd[1:2], "<input.obj>", *cmd[3:]],
+                    "lambda_init": float(lambda_init),
+                    "distortion_bound": float(distortion_bound),
+                    "timeout_sec": effective_timeout,
+                    "use_bijectivity": bool(bijectivity_enabled),
+                    "initial_cut_option": int(self.config.optcuts_initial_cut_option),
+                    "stdout_tail": stdout[-4000:],
+                    "stderr_tail": stderr[-4000:],
+                    "output_face_count": int(len(parsed.faces)),
+                    "output_texture_coordinate_count": int(len(parsed.texcoords)),
+                    "per_corner_uv_preserved": True,
+                    "residue_aware_objective": {
+                        "enabled": residue_aware,
+                        "capability_confirmed": bool(residue_aware),
+                        "residue_fragmentation_weight": fragmentation_weight,
+                        "sidecar_sha256": sha256_file(footprint_sidecar) if footprint_sidecar else None,
+                        "sidecar_schema_version": (
+                            int(footprint_metadata["schema_version"]) if footprint_metadata else None
+                        ),
+                        "residue_count": (int(footprint_metadata["residue_count"]) if footprint_metadata else 0),
+                        "internal_edge_count": (
+                            int(footprint_metadata["internal_edge_count"]) if footprint_metadata else 0
+                        ),
+                        "initial_seam_edge_count": (
+                            int(footprint_metadata["initial_seam_edge_count"]) if footprint_metadata else 0
+                        ),
+                    },
+                }
+                return uv, execution
+        except (OSError, ValueError) as exc:
             raise RuntimeError(f"OptCuts execution error: {exc}") from exc
+
+    def _resolved_binary(self) -> tuple[str, str]:
+        if self._binary is not None:
+            return self._binary
+        requested = os.environ.get(self.config.optcuts_env_var, self.config.optcuts_bin)
+        resolved = resolve_optcuts_binary(self.config)
+        if not resolved:
+            raise RuntimeError(
+                f"OptCuts binary not found: {requested}. Run 'topoppi-install-optcuts', "
+                f"or set {self.config.optcuts_env_var} to a native OptCuts executable."
+            )
+        digest = sha256_file(resolved)
+        expected = self.config.expected_binary_sha256.strip().lower()
+        if expected and digest.lower() != expected:
+            raise RuntimeError(f"OptCuts binary checksum mismatch: expected {expected}, got {digest}.")
+        if self.config.residue_fragmentation_weight > 0.0 and not supports_residue_footprint_energy(resolved):
+            raise RuntimeError(
+                "The selected OptCuts binary does not expose residue-footprint energy support. "
+                "Build the residue-aware binary from tools/OptCuts before enabling "
+                "residue_fragmentation_weight."
+            )
+        self._binary = (resolved, digest)
+        return self._binary
+
+    @staticmethod
+    def _stop_process(proc: subprocess.Popen) -> None:
+        proc.terminate()
+        try:
+            proc.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate(timeout=3)
 
     def _maybe_export_optcuts_frames(self, tmpdir: str, patch_index: int) -> None:
         if not self.config.save_optcuts_frames:
@@ -239,106 +558,56 @@ class OptCutsUVOptimizer:
             output_dir = os.path.join(os.getcwd(), "optcuts_frames")
         os.makedirs(output_dir, exist_ok=True)
 
-        png_paths = []
-        raster_paths = []
-        gif_paths = []
+        raster_paths: list[str] = []
+        gif_paths: list[str] = []
         for root, _, files in os.walk(tmpdir):
             for name in files:
                 lower = name.lower()
                 full_path = os.path.join(root, name)
-                if lower.endswith(".png"):
-                    png_paths.append(full_path)
-                    raster_paths.append(full_path)
-                elif lower.endswith((".bmp", ".jpg", ".jpeg", ".tif", ".tiff")):
+                if lower.endswith((".png", ".bmp", ".jpg", ".jpeg", ".tif", ".tiff")):
                     raster_paths.append(full_path)
                 elif lower.endswith(".gif"):
-                    gif_paths.append(os.path.join(root, name))
+                    gif_paths.append(full_path)
 
         patch_dir = os.path.join(output_dir, f"patch_{patch_index:03d}")
         os.makedirs(patch_dir, exist_ok=True)
 
-        stride = max(1, int(self.config.optcuts_frame_stride))
+        stride = int(self.config.optcuts_frame_stride)
+        min_long_edge = int(self.config.optcuts_min_frame_long_edge)
 
         def _frame_sort_key(path: str):
-            # OptCuts frame names vary by build/output folder and are not always pure digits.
-            # Build a natural sort key from all digit chunks in basename so names such as
-            # 1.png / 10.png / frame_2_0.png are ordered consistently.
             base = os.path.splitext(os.path.basename(path))[0]
             chunks = re.findall(r"\d+", base)
             nums = tuple(int(c) for c in chunks) if chunks else ()
             return (0 if chunks else 1, nums, base, path)
 
-        ordered_png_paths = sorted(png_paths, key=_frame_sort_key)
-        ordered_raster_paths = sorted(raster_paths, key=_frame_sort_key)
+        ordered_rasters = sorted(raster_paths, key=_frame_sort_key)
 
-        def _is_diagnostic_png(path: str) -> bool:
+        def _is_diagnostic(path: str) -> bool:
             base = os.path.basename(path).lower()
             stem = os.path.splitext(base)[0]
             return base == "finalresult.png" or stem.endswith("_distortion") or stem.endswith("_seam")
 
-        def _is_viewer_like_png(path: str) -> bool:
-            # Viewer snapshot names vary across OptCuts builds; keep this permissive.
-            # Examples seen in practice:
-            # - 0.png / 1.png / 2.png
-            # - frame_0001.png / viewer_001.png / iter_10.png
-            # We only exclude known static diagnostic outputs.
-            base = os.path.basename(path).lower()
-            stem = os.path.splitext(base)[0]
-            if _is_diagnostic_png(path):
-                return False
-            if stem.isdigit():
-                return True
-            return any(tag in stem for tag in ("frame", "viewer", "iter", "step", "anim"))
+        def _is_timeline(path: str) -> bool:
+            stem = os.path.splitext(os.path.basename(path))[0].lower()
+            return not _is_diagnostic(path) and (
+                stem.isdigit() or any(tag in stem for tag in ("frame", "viewer", "iter", "step", "anim"))
+            )
 
-        # Prefer likely viewer timeline PNGs; if unavailable, still prefer any non-diagnostic
-        # PNG before falling back to GIF extraction (to avoid irreversible GIF quantization).
-        viewer_like = [path for path in ordered_png_paths if _is_viewer_like_png(path)]
-        non_diagnostic_pngs = [path for path in ordered_png_paths if not _is_diagnostic_png(path)]
-        non_diagnostic_rasters = [path for path in ordered_raster_paths if not _is_diagnostic_png(path)]
-
-        # Prefer PNG/raster viewer snapshots whenever they provide an actual frame sequence.
-        # Only if sequence rasters are unavailable do we fallback to GIF extraction.
-        frame_candidates = viewer_like if viewer_like else non_diagnostic_pngs
-        prefer_png_sequence = bool(frame_candidates) and len(frame_candidates) > 1
-        if not prefer_png_sequence and len(non_diagnostic_rasters) > 1:
-            # Some OptCuts builds dump snapshots as JPG/BMP/TIFF instead of PNG.
-            # Use those rasters directly (converted to PNG on save) to keep sharpness.
-            frame_candidates = non_diagnostic_rasters
-            prefer_png_sequence = True
-
-        if prefer_png_sequence:
-            # Sample by rank (every Nth frame after sorting), not by raw numeric ID.
-            # This avoids dropping almost all frames when only a subset of files have
-            # digit-only basenames.
+        timeline = [path for path in ordered_rasters if _is_timeline(path)]
+        non_diagnostic = [path for path in ordered_rasters if not _is_diagnostic(path)]
+        frame_candidates = timeline if len(timeline) > 1 else non_diagnostic
+        if len(frame_candidates) > 1:
             selected = frame_candidates[::stride]
-            if not selected:
-                selected = [frame_candidates[0]]
-            for idx, src_path in enumerate(selected):
-                base_name = os.path.basename(src_path)
-                dst_name = f"{idx:04d}_{base_name}"
-                dst_path = os.path.join(patch_dir, dst_name)
-                self._copy_png_with_min_resolution(
-                    src_path=src_path,
-                    dst_path=dst_path,
-                    min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
-                )
+            self._export_raster_frames(selected, patch_dir, min_long_edge)
             logger.info(
-                "OptCuts PNG frames exported for patch %d: %d image(s) -> %s",
+                "OptCuts raster frames exported for patch %d: %d image(s) -> %s",
                 patch_index,
                 len(selected),
                 patch_dir,
             )
-            if not viewer_like:
-                logger.warning(
-                    "No explicit viewer-like PNG naming pattern found for patch %d. "
-                    "Exported non-diagnostic raster sequence to preserve quality.",
-                    patch_index,
-                )
             return
 
-        # No sharp raster sequence found; fallback to GIF to preserve temporal process.
-        # GIF is palette-quantized by OptCuts itself, so extraction keeps native resolution
-        # (no upscaling) to avoid magnifying blocky artifacts.
         extracted_gif_frames = self._export_frames_from_gifs(
             gif_paths=gif_paths,
             patch_dir=patch_dir,
@@ -350,12 +619,6 @@ class OptCutsUVOptimizer:
                 gif_name = f"source_{gif_idx:02d}_{os.path.basename(gif_path)}"
                 shutil.copy2(gif_path, os.path.join(patch_dir, gif_name))
         if extracted_gif_frames > 0:
-            logger.warning(
-                "No raster frame sequence found for patch %d. Exported frames from GIF at native "
-                "resolution (palette quantization is produced by OptCuts). For viewer-level sharp "
-                "process frames, OptCuts itself must output per-iteration PNG screenshots.",
-                patch_index,
-            )
             logger.info(
                 "OptCuts GIF viewer frames exported for patch %d: %d image(s) -> %s",
                 patch_index,
@@ -364,52 +627,30 @@ class OptCutsUVOptimizer:
             )
             return
 
-        if not png_paths:
-            logger.info("OptCuts frame export enabled, but no PNG/GIF frames were found for patch %d.", patch_index)
+        if not ordered_rasters:
+            logger.info(
+                "OptCuts frame export enabled, but no raster or GIF frames were found for patch %d.", patch_index
+            )
             return
 
-        frame_candidates = ordered_png_paths
-        selected = frame_candidates[::stride]
-        if not selected:
-            selected = [frame_candidates[0]]
-
-        # Different OptCuts subfolders can contain frames with the same basename
-        # (e.g. multiple "0.png"). Copying by basename would overwrite files and
-        # make it look like only one image was exported. Use deterministic unique names.
-        for idx, src_path in enumerate(selected):
-            base_name = os.path.basename(src_path)
-            dst_name = f"{idx:04d}_{base_name}"
-            dst_path = os.path.join(patch_dir, dst_name)
-            self._copy_png_with_min_resolution(
-                src_path=src_path,
-                dst_path=dst_path,
-                min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
-            )
-
-        final_png = self._find_first_existing_file(
-            [
-                os.path.join(tmpdir, "output", "finalResult.png"),
-                os.path.join(tmpdir, "finalResult.png"),
-            ]
-        )
-        if final_png:
-            self._copy_png_with_min_resolution(
-                src_path=final_png,
-                dst_path=os.path.join(patch_dir, "finalResult.png"),
-                min_long_edge=max(0, int(self.config.optcuts_min_frame_long_edge)),
-            )
-
+        selected = ordered_rasters[::stride]
+        self._export_raster_frames(selected, patch_dir, min_long_edge)
         logger.info(
-            "OptCuts frames exported for patch %d: %d image(s) -> %s",
+            "OptCuts diagnostic images exported for patch %d: %d image(s) -> %s",
             patch_index,
             len(selected),
             patch_dir,
         )
-        logger.warning(
-            "No viewer-like frame sequence found for patch %d. Exported fallback diagnostic PNGs; "
-            "the current OptCuts build may only emit static analysis images.",
-            patch_index,
-        )
+
+    @staticmethod
+    def _export_raster_frames(paths: List[str], output_dir: str, min_dimension: int) -> None:
+        for index, source in enumerate(paths):
+            stem = os.path.splitext(os.path.basename(source))[0]
+            OptCutsUVOptimizer._copy_png_with_min_resolution(
+                src_path=source,
+                dst_path=os.path.join(output_dir, f"{index:04d}_{stem}.png"),
+                min_long_edge=min_dimension,
+            )
 
     @staticmethod
     def _export_frames_from_gifs(gif_paths: List[str], patch_dir: str, stride: int, min_long_edge: int) -> int:
@@ -424,8 +665,7 @@ class OptCutsUVOptimizer:
         ordered_gifs = sorted(gif_paths, key=_gif_sort_key)
         for gif_idx, gif_path in enumerate(ordered_gifs):
             with Image.open(gif_path) as gif:
-                total_frames = getattr(gif, "n_frames", 1)
-                for frame_idx in range(0, total_frames, stride):
+                for frame_idx in range(0, gif.n_frames, stride):
                     gif.seek(frame_idx)
                     frame = gif.convert("RGBA")
                     out_name = f"{frame_count:04d}_viewer_g{gif_idx:02d}_f{frame_idx:05d}.png"
@@ -442,17 +682,10 @@ class OptCutsUVOptimizer:
         if min_long_edge <= 0:
             return image
         w, h = image.size
-        if w <= 0 or h <= 0:
-            return image
-        # Historical behavior only constrained the long edge, which allowed very narrow
-        # frames such as 320x1600 to pass without resizing. Here we enforce that both
-        # dimensions reach at least min_long_edge so width does not remain tiny.
-        scale_w = float(min_long_edge) / float(w)
-        scale_h = float(min_long_edge) / float(h)
-        scale = max(1.0, scale_w, scale_h)
+        scale = max(1.0, float(min_long_edge) / float(max(w, h)))
         if scale <= 1.0:
             return image
-        new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
+        new_size = (int(round(w * scale)), int(round(h * scale)))
         return image.resize(new_size, Image.Resampling.LANCZOS)
 
     @staticmethod
@@ -468,24 +701,6 @@ class OptCutsUVOptimizer:
     def _save_png_with_min_resolution(image: Image.Image, dst_path: str, min_long_edge: int) -> None:
         out = OptCutsUVOptimizer._resize_image_if_needed(image, min_long_edge=min_long_edge)
         out.save(dst_path)
-        if min_long_edge <= 0:
-            return
-        # Defensive check: make sure saved output really meets the configured minimum.
-        with Image.open(dst_path) as saved:
-            sw, sh = saved.size
-        if sw >= min_long_edge and sh >= min_long_edge:
-            return
-        # Second pass should be rare, but guarantees final dimensions if first pass
-        # was bypassed by any unexpected image backend behavior.
-        corrected = OptCutsUVOptimizer._resize_image_if_needed(out, min_long_edge=min_long_edge)
-        corrected.save(dst_path)
-
-    @staticmethod
-    def _find_first_existing_file(paths: List[str]) -> Optional[str]:
-        for p in paths:
-            if os.path.exists(p):
-                return p
-        return None
 
     @staticmethod
     def _locate_optcuts_output_obj(tmpdir: str) -> str:
@@ -503,102 +718,242 @@ class OptCutsUVOptimizer:
         return os.path.join(tmpdir, "output", "finalResult_mesh.obj")
 
     @staticmethod
-    def _read_uv_from_obj(obj_path: str, expected_vertex_count: Optional[int] = None) -> Optional[np.ndarray]:
-        try:
-            loaded = trimesh.load(obj_path, process=False)
-            if isinstance(loaded, trimesh.Trimesh):
-                vis = getattr(loaded, "visual", None)
-                uv = getattr(vis, "uv", None)
-                if uv is not None and len(uv) > 0:
-                    uv = np.asarray(uv, dtype=np.float64)
-                    if expected_vertex_count is None or len(uv) == expected_vertex_count:
-                        return uv
-        except Exception:
-            pass
+    def _write_obj_with_uv(
+        mesh: trimesh.Trimesh,
+        obj_path: str,
+        initial_uv: Optional[np.ndarray],
+    ) -> dict[str, object]:
+        """Write repaired 3-D topology with diskification represented only in UV.
 
-        if meshio is not None:
-            try:
-                mesh = meshio.read(obj_path)
-                if "obj:vt" in mesh.point_data:
-                    uv = np.asarray(mesh.point_data["obj:vt"], dtype=np.float64)
-                    if expected_vertex_count is None or len(uv) == expected_vertex_count:
-                        return uv[:, :2]
-            except Exception:
-                pass
+        Parameterization may duplicate vertices solely to turn a manifold patch
+        into a disk.  Those copies must share one OBJ geometry vertex so OptCuts
+        can price, move, and merge the corresponding seam.  Copies introduced
+        earlier to repair disconnected vertex fans retain distinct geometry IDs.
+        """
 
-        if expected_vertex_count is not None:
-            try:
-                uv = OptCutsUVOptimizer._read_uv_from_obj_manual(obj_path, expected_vertex_count)
-                if uv is not None:
-                    return uv
-            except Exception:
-                pass
+        mesh_vertices = np.asarray(mesh.vertices, dtype=np.float64)
+        mesh_faces = np.asarray(mesh.faces, dtype=np.int64)
+        source_vertices = np.asarray(
+            mesh.metadata.get("source_vertex_ids", np.arange(len(mesh_vertices))),
+            dtype=np.int64,
+        )
+        if source_vertices.shape != (len(mesh_vertices),):
+            raise ValueError("source_vertex_ids must contain one ID per mesh vertex.")
+        geometry_vertex_ids = np.asarray(
+            mesh.metadata.get(
+                OPTCUTS_GEOMETRY_VERTEX_IDS,
+                np.arange(len(mesh_vertices), dtype=np.int64),
+            ),
+            dtype=np.int64,
+        )
+        if geometry_vertex_ids.shape != (len(mesh_vertices),):
+            raise ValueError("optcuts_geometry_vertex_ids must contain one ID per mesh vertex.")
+        footprint_topology_vertex_ids = (
+            geometry_vertex_ids if OPTCUTS_GEOMETRY_VERTEX_IDS in mesh.metadata else source_vertices
+        )
 
-        logger.warning("Failed to parse UV from OptCuts OBJ: %s", obj_path)
-        return None
+        geometry_to_input: dict[int, int] = {}
+        representatives: list[int] = []
+        input_sources: list[int] = []
+        input_footprint_topology_vertices: list[int] = []
+        mesh_to_input = np.empty(len(mesh_vertices), dtype=np.int64)
+        for mesh_vertex, geometry_vertex in enumerate(geometry_vertex_ids):
+            geometry_id = int(geometry_vertex)
+            input_vertex = geometry_to_input.get(geometry_id)
+            if input_vertex is None:
+                input_vertex = len(representatives)
+                geometry_to_input[geometry_id] = input_vertex
+                representatives.append(mesh_vertex)
+                input_sources.append(int(source_vertices[mesh_vertex]))
+                input_footprint_topology_vertices.append(int(footprint_topology_vertex_ids[mesh_vertex]))
+            elif int(source_vertices[mesh_vertex]) != input_sources[input_vertex]:
+                raise ValueError("One OptCuts geometry vertex maps to inconsistent root source vertices.")
+            mesh_to_input[mesh_vertex] = input_vertex
+
+        representative_indices = np.asarray(representatives, dtype=np.int64)
+        vertices = mesh_vertices[representative_indices]
+        faces = mesh_to_input[mesh_faces]
+        if np.any(np.diff(np.sort(faces, axis=1), axis=1) == 0):
+            raise ValueError("Collapsing diskification copies creates a degenerate OptCuts face.")
+        geometry_scale = max(float(np.max(np.ptp(mesh_vertices, axis=0))), 1.0)
+        coordinate_tolerance = 1e-8 * geometry_scale
+        deviations = np.linalg.norm(mesh_vertices - vertices[mesh_to_input], axis=1)
+        if np.any(deviations > coordinate_tolerance):
+            raise ValueError(
+                "Vertices sharing one OptCuts geometry ID disagree in 3-D position "
+                f"({float(np.max(deviations)):.3g} > {coordinate_tolerance:.3g})."
+            )
+        corners = None if initial_uv is None else as_corner_uv(mesh, initial_uv)
+        texcoords: list[tuple[float, float] | None] = [] if corners is None else [None] * len(vertices)
+        face_texcoord_indices = np.empty_like(faces)
+        if corners is not None:
+            texture_index: dict[tuple[int, float, float], int] = {}
+            for face_index, face in enumerate(faces):
+                for corner_index, input_vertex in enumerate(face):
+                    u, v = (float(value) for value in corners[face_index, corner_index])
+                    key = (int(input_vertex), u, v)
+                    index = texture_index.get(key)
+                    if index is None:
+                        vertex = int(input_vertex)
+                        index = vertex if texcoords[vertex] is None else len(texcoords)
+                        texture_index[key] = index
+                        if index == vertex:
+                            texcoords[vertex] = (u, v)
+                        else:
+                            texcoords.append((u, v))
+                    face_texcoord_indices[face_index, corner_index] = index
+        with open(obj_path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("# TopoPPI seam-preserving OptCuts input\n")
+            for x, y, z in vertices:
+                handle.write(f"v {x:.17g} {y:.17g} {z:.17g}\n")
+            for texcoord in texcoords:
+                u, v = texcoord if texcoord is not None else (0.0, 0.0)
+                handle.write(f"vt {u:.17g} {v:.17g}\n")
+            for face_index, tri in enumerate(faces):
+                if corners is None:
+                    handle.write("f " + " ".join(str(int(vertex) + 1) for vertex in tri) + "\n")
+                else:
+                    tokens = [
+                        f"{int(vertex) + 1}/{int(face_texcoord_indices[face_index, corner_index]) + 1}"
+                        for corner_index, vertex in enumerate(tri)
+                    ]
+                    handle.write("f " + " ".join(tokens) + "\n")
+        return {
+            "vertex_count": int(len(vertices)),
+            "mesh_vertex_count": int(len(mesh_vertices)),
+            "collapsed_vertex_copy_count": int(len(mesh_vertices) - len(vertices)),
+            "collapsed_diskification_vertex_copy_count": int(len(mesh_vertices) - len(vertices)),
+            "preserved_topology_vertex_copy_count": int(len(input_sources) - len(np.unique(input_sources))),
+            "source_vertex_ids": input_sources,
+            "footprint_topology_vertex_ids": input_footprint_topology_vertices,
+        }
 
     @staticmethod
-    def _read_uv_from_obj_manual(obj_path: str, expected_vertex_count: int) -> Optional[np.ndarray]:
+    def _parse_obj_uv(obj_path: str) -> Optional[ParsedOBJUV]:
+        vertices = []
         texcoords = []
-        vertex_uv_accum = [[] for _ in range(expected_vertex_count)]
-        pending_pairs = []
-
-        with open(obj_path, "r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                if line.startswith("vt "):
-                    parts = line.strip().split()
+        raw_faces = []
+        raw_face_texcoords = []
+        with open(obj_path, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if line.startswith("v "):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                elif line.startswith("vt "):
+                    parts = line.split()
                     if len(parts) >= 3:
-                        try:
-                            texcoords.append((float(parts[1]), float(parts[2])))
-                        except ValueError:
-                            continue
-                    continue
-
-                if not line.startswith("f "):
-                    continue
-
-                face_tokens = line.strip().split()[1:]
-                for token in face_tokens:
-                    if "/" not in token:
+                        texcoords.append((float(parts[1]), float(parts[2])))
+                elif line.startswith("f "):
+                    vertex_indices = []
+                    texture_indices = []
+                    for token in line.split()[1:]:
+                        chunks = token.split("/")
+                        if len(chunks) < 2 or not chunks[0] or not chunks[1]:
+                            vertex_indices = []
+                            break
+                        vertex_indices.append(int(chunks[0]))
+                        texture_indices.append(int(chunks[1]))
+                    if len(vertex_indices) < 3:
                         continue
-                    chunks = token.split("/")
-                    if len(chunks) < 2 or not chunks[0] or not chunks[1]:
-                        continue
+                    for corner in range(1, len(vertex_indices) - 1):
+                        raw_faces.append([vertex_indices[0], vertex_indices[corner], vertex_indices[corner + 1]])
+                        raw_face_texcoords.append(
+                            [texture_indices[0], texture_indices[corner], texture_indices[corner + 1]]
+                        )
 
-                    try:
-                        v_raw = int(chunks[0])
-                        vt_raw = int(chunks[1])
-                    except ValueError:
-                        continue
-
-                    pending_pairs.append((v_raw, vt_raw))
-
-        if not texcoords:
+        if not vertices or not texcoords or not raw_faces:
             return None
+        vertex_count = len(vertices)
+        texture_count = len(texcoords)
 
-        for v_raw, vt_raw in pending_pairs:
-            v_idx = (expected_vertex_count + v_raw) if v_raw < 0 else (v_raw - 1)
-            vt_idx = (len(texcoords) + vt_raw) if vt_raw < 0 else (vt_raw - 1)
-            if 0 <= v_idx < expected_vertex_count and 0 <= vt_idx < len(texcoords):
-                vertex_uv_accum[v_idx].append(texcoords[vt_idx])
+        def _resolve(raw_index: int, count: int) -> int:
+            return count + raw_index if raw_index < 0 else raw_index - 1
 
-        uv = np.zeros((expected_vertex_count, 2), dtype=np.float64)
-        assigned = 0
-        for i, candidates in enumerate(vertex_uv_accum):
-            if not candidates:
-                continue
-            assigned += 1
-            if len(candidates) == 1:
-                uv[i] = candidates[0]
-            else:
-                uv[i] = np.mean(np.asarray(candidates, dtype=np.float64), axis=0)
+        faces = np.asarray(
+            [[_resolve(index, vertex_count) for index in face] for face in raw_faces],
+            dtype=np.int64,
+        )
+        face_texcoords = np.asarray(
+            [[_resolve(index, texture_count) for index in face] for face in raw_face_texcoords],
+            dtype=np.int64,
+        )
+        if np.any(faces < 0) or np.any(faces >= vertex_count):
+            return None
+        if np.any(face_texcoords < 0) or np.any(face_texcoords >= texture_count):
+            return None
+        texture_array = np.asarray(texcoords, dtype=np.float64)
+        vertex_array = np.asarray(vertices, dtype=np.float64)
+        if not np.isfinite(vertex_array).all() or not np.isfinite(texture_array).all():
+            return None
+        return ParsedOBJUV(
+            vertices=vertex_array,
+            faces=faces,
+            texcoords=texture_array,
+            face_texcoord_indices=face_texcoords,
+            corner_uv=texture_array[face_texcoords],
+        )
 
-        if assigned != expected_vertex_count:
-            logger.warning(
-                "OBJ UV manual parse assigned %d/%d vertices for %s",
-                assigned,
-                expected_vertex_count,
-                obj_path,
+    @staticmethod
+    def _align_output_corners(mesh: trimesh.Trimesh, parsed: ParsedOBJUV) -> np.ndarray:
+        """Align OptCuts face-corner UV to the unchanged input face order."""
+
+        input_faces = np.asarray(mesh.faces, dtype=np.int64)
+        if len(parsed.faces) != len(input_faces):
+            raise RuntimeError(
+                f"OptCuts changed face count ({len(parsed.faces)} vs {len(input_faces)}); "
+                "the output cannot be scored on the frozen domain."
             )
-            return None
-        return uv
+        input_vertices = np.asarray(mesh.vertices, dtype=np.float64)
+        geometry_scale = max(float(np.max(np.ptp(input_vertices, axis=0))), 1.0)
+        coordinate_tolerance = max(
+            1e-12 * geometry_scale,
+            256.0 * np.finfo(np.float64).eps * max(float(np.max(np.abs(input_vertices))), 1.0),
+        )
+        canonical_vertices, input_to_canonical = np.unique(input_vertices, axis=0, return_inverse=True)
+        neighbor_count = min(2, len(canonical_vertices))
+        distances, output_to_canonical = cKDTree(canonical_vertices).query(
+            parsed.vertices,
+            k=neighbor_count,
+        )
+        if neighbor_count == 2:
+            if np.any(np.asarray(distances)[:, 1] <= coordinate_tolerance):
+                raise RuntimeError("OptCuts output vertex is geometrically ambiguous at the OBJ round-trip tolerance.")
+            distances = np.asarray(distances)[:, 0]
+            output_to_canonical = np.asarray(output_to_canonical)[:, 0]
+        if np.any(distances > coordinate_tolerance):
+            raise RuntimeError(
+                "OptCuts changed 3-D geometry beyond the OBJ round-trip tolerance "
+                f"({float(np.max(distances)):.3g} > {coordinate_tolerance:.3g})."
+            )
+        mapped_input_faces = np.asarray(input_to_canonical, dtype=np.int64)[input_faces]
+        mapped_output_faces = np.asarray(output_to_canonical, dtype=np.int64)[parsed.faces]
+        if np.array_equal(mapped_output_faces, mapped_input_faces):
+            return np.ascontiguousarray(parsed.corner_uv)
+
+        # A topology cut deliberately duplicates seam vertices at identical 3-D
+        # coordinates. Collapse exact input-coordinate copies to stable geometric
+        # IDs, then map rounded OBJ output coordinates to those IDs.
+        def face_key(ids: np.ndarray) -> tuple[int, int, int]:
+            return tuple(sorted(int(value) for value in ids))
+
+        output_face_map: dict[tuple[int, int, int], list[int]] = {}
+        for output_index, ids in enumerate(mapped_output_faces):
+            key = face_key(ids)
+            output_face_map.setdefault(key, []).append(output_index)
+
+        aligned = np.empty((len(input_faces), 3, 2), dtype=np.float64)
+        for input_index, input_ids in enumerate(mapped_input_faces):
+            candidates = output_face_map.get(face_key(input_ids))
+            if not candidates:
+                raise RuntimeError(f"OptCuts output face {input_index} does not match the frozen input geometry.")
+            output_index = candidates.pop(0)
+            output_ids = mapped_output_faces[output_index]
+            for input_corner, canonical_id in enumerate(input_ids):
+                matches = np.flatnonzero(output_ids == canonical_id)
+                if len(matches) != 1:
+                    raise RuntimeError("OptCuts output contains a degenerate or ambiguous geometric face.")
+                output_corner = int(matches[0])
+                aligned[input_index, input_corner] = parsed.corner_uv[output_index, output_corner]
+        return aligned

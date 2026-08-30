@@ -1,0 +1,197 @@
+diff --git a/src/TriMesh.cpp b/src/TriMesh.cpp
+index 6c17cfc..13bda33 100755
+--- a/src/TriMesh.cpp
++++ b/src/TriMesh.cpp
+@@ -20,7 +20,9 @@
+ 
+ #include <tbb/tbb.h>
+ 
++#include <cmath>
+ #include <fstream>
++#include <limits>
+ 
+ extern std::ofstream logFile;
+ extern Timer timer_step;
+@@ -32,6 +34,155 @@ extern double filterExp_in;
+ extern int inSplitTotalAmt;
+ 
+ namespace OptCuts {
++    namespace {
++        double cross2D(const Eigen::RowVector2d& a,
++                       const Eigen::RowVector2d& b,
++                       const Eigen::RowVector2d& c)
++        {
++            const Eigen::RowVector2d ab = b - a;
++            const Eigen::RowVector2d ac = c - a;
++            return ab[0] * ac[1] - ab[1] * ac[0];
++        }
++
++        bool pointOnSegment(const Eigen::RowVector2d& point,
++                            const Eigen::RowVector2d& start,
++                            const Eigen::RowVector2d& end,
++                            double coordinateTol,
++                            double areaTol)
++        {
++            if(std::abs(cross2D(start, end, point)) > areaTol) {
++                return false;
++            }
++            return point[0] >= std::min(start[0], end[0]) - coordinateTol &&
++                   point[0] <= std::max(start[0], end[0]) + coordinateTol &&
++                   point[1] >= std::min(start[1], end[1]) - coordinateTol &&
++                   point[1] <= std::max(start[1], end[1]) + coordinateTol;
++        }
++
++        bool segmentsIntersect(const Eigen::RowVector2d& a,
++                               const Eigen::RowVector2d& b,
++                               const Eigen::RowVector2d& c,
++                               const Eigen::RowVector2d& d,
++                               double coordinateTol,
++                               double areaTol)
++        {
++            const double abc = cross2D(a, b, c);
++            const double abd = cross2D(a, b, d);
++            const double cda = cross2D(c, d, a);
++            const double cdb = cross2D(c, d, b);
++            if(((abc > areaTol && abd < -areaTol) || (abc < -areaTol && abd > areaTol)) &&
++               ((cda > areaTol && cdb < -areaTol) || (cda < -areaTol && cdb > areaTol)))
++            {
++                return true;
++            }
++            return pointOnSegment(c, a, b, coordinateTol, areaTol) ||
++                   pointOnSegment(d, a, b, coordinateTol, areaTol) ||
++                   pointOnSegment(a, c, d, coordinateTol, areaTol) ||
++                   pointOnSegment(b, c, d, coordinateTol, areaTol);
++        }
++
++        bool prepareValidLocalPSLG(const TriMesh& mesh,
++                                   Eigen::MatrixXd& UV,
++                                   const Eigen::MatrixXi& E,
++                                   const Eigen::VectorXi& bnd)
++        {
++            const int vertexCount = static_cast<int>(UV.rows());
++            if(!mesh.checkInversion(true) || UV.cols() != 2 || E.cols() != 2 || vertexCount < 3 ||
++               E.rows() != vertexCount || bnd.size() > vertexCount)
++            {
++                return false;
++            }
++            for(int bndI = 0; bndI < bnd.size(); ++bndI) {
++                if(bnd[bndI] < 0 || bnd[bndI] >= mesh.V.rows()) {
++                    return false;
++                }
++                UV.row(bndI) = mesh.V.row(bnd[bndI]);
++            }
++            if(!UV.allFinite()) {
++                return false;
++            }
++
++            const double spanX = UV.col(0).maxCoeff() - UV.col(0).minCoeff();
++            const double spanY = UV.col(1).maxCoeff() - UV.col(1).minCoeff();
++            const double span = std::max(spanX, spanY);
++            const double maxAbs = UV.cwiseAbs().maxCoeff();
++            const double coordinateTol = std::max(
++                128.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, maxAbs),
++                1.0e-12 * std::max(span, std::numeric_limits<double>::min()));
++            const double squaredCoordinateTol = coordinateTol * coordinateTol;
++            const double areaTol = coordinateTol * std::max(span, coordinateTol);
++
++            for(int i = 0; i < vertexCount; ++i) {
++                for(int j = i + 1; j < vertexCount; ++j) {
++                    if((UV.row(i) - UV.row(j)).squaredNorm() <= squaredCoordinateTol) {
++                        return false;
++                    }
++                }
++            }
++
++            std::vector<std::vector<int>> adjacency(vertexCount);
++            std::set<std::pair<int, int>> uniqueEdges;
++            for(int edgeI = 0; edgeI < E.rows(); ++edgeI) {
++                const int a = E(edgeI, 0);
++                const int b = E(edgeI, 1);
++                if(a < 0 || b < 0 || a >= vertexCount || b >= vertexCount || a == b ||
++                   (UV.row(a) - UV.row(b)).squaredNorm() <= squaredCoordinateTol)
++                {
++                    return false;
++                }
++                const std::pair<int, int> edge(std::min(a, b), std::max(a, b));
++                if(!uniqueEdges.insert(edge).second) {
++                    return false;
++                }
++                adjacency[a].emplace_back(b);
++                adjacency[b].emplace_back(a);
++            }
++            for(const auto& neighbors : adjacency) {
++                if(neighbors.size() != 2) {
++                    return false;
++                }
++            }
++
++            std::vector<char> visited(vertexCount, 0);
++            int previous = -1;
++            int current = 0;
++            double twiceArea = 0.0;
++            for(int step = 0; step < vertexCount; ++step) {
++                if(visited[current]) {
++                    return false;
++                }
++                visited[current] = 1;
++                const int next = adjacency[current][0] == previous ?
++                    adjacency[current][1] : adjacency[current][0];
++                twiceArea += UV(current, 0) * UV(next, 1) - UV(current, 1) * UV(next, 0);
++                previous = current;
++                current = next;
++            }
++            if(current != 0 ||
++               std::abs(twiceArea) <= areaTol * static_cast<double>(vertexCount))
++            {
++                return false;
++            }
++
++            for(int first = 0; first < E.rows(); ++first) {
++                const int a = E(first, 0);
++                const int b = E(first, 1);
++                for(int second = first + 1; second < E.rows(); ++second) {
++                    const int c = E(second, 0);
++                    const int d = E(second, 1);
++                    if(a == c || a == d || b == c || b == d) {
++                        continue;
++                    }
++                    if(segmentsIntersect(UV.row(a), UV.row(b), UV.row(c), UV.row(d),
++                                         coordinateTol, areaTol))
++                    {
++                        return false;
++                    }
++                }
++            }
++            return true;
++        }
++    }
+     
+     TriMesh::TriMesh(void)
+     {
+@@ -2372,2 +2523,5 @@ namespace OptCuts {
+             bnd << path_local[2], path_local[1], path_local[0], static_cast<int>(localMesh.V.rows()) - 1;
++            if(!prepareValidLocalPSLG(localMesh, UV_bnds, E, bnd)) {
++                return -__DBL_MAX__;
++            }
+         }
+@@ -2492,6 +2646,9 @@ namespace OptCuts {
+                 assert(finder != globalVI2local.end());
+                 bnd[bndI] = finder->second;
+             }
++            if(!prepareValidLocalPSLG(localMesh, UV_bnds, E, bnd)) {
++                return -__DBL_MAX__;
++            }
+         }
+         
+         // conduct optimization on local mesh
+@@ -2766,6 +2923,10 @@ namespace OptCuts {
+                 assert(0 && "invalid split path!");
+                 break;
+         }
++
++        if(scaffold && !prepareValidLocalPSLG(localMesh, UV_bnds, E, bnd)) {
++            return -__DBL_MAX__;
++        }
+         
+         // conduct optimization on local mesh
+         std::vector<OptCuts::Energy*> energyTerms(1, &SD);

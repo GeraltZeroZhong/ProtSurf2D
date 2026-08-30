@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\TopoPPI",
-    [string]$Version = "1.2",
+    [string]$Version = "1.3",
     [string]$PackageSpec = "",
     [string]$MicromambaUrl = "https://micro.mamba.pm/api/micromamba/win-64/latest"
 )
@@ -73,7 +73,6 @@ try {
         "pillow",
         "rtree",
         "shapely",
-        "openbabel",
         "mdanalysis",
         "rdkit",
         "psutil",
@@ -93,6 +92,7 @@ try {
 
     $Python = Join-Path $EnvDir "python.exe"
     $OptCutsInstaller = Join-Path $EnvDir "Scripts\topoppi-install-optcuts.exe"
+    $OptCutsExe = Join-Path $OptCutsDir "OptCuts_bin.exe"
     if (!(Test-Path $Python)) {
         throw "Python was not installed at $Python."
     }
@@ -107,40 +107,29 @@ try {
     Invoke-External $Python @("-m", "pip", "install", "prolif>=2.0")
     Invoke-External $Python @("-m", "pip", "install", "--no-deps", $ResolvedPackageSpec)
 
-    if (!(Test-Path $OptCutsInstaller)) {
-        throw "topoppi-install-optcuts was not installed at $OptCutsInstaller."
-    }
+    Write-Step "Verifying ProLIF interaction stack"
+    Invoke-External $Python @(
+        "-c",
+        "import MDAnalysis, prolif, rdkit; print('ProLIF interaction stack ready')"
+    )
 
     Write-Step "Installing Windows OptCuts artifact"
     if (Test-Path $BundledOptCuts) {
-        $BundledOptCutsUri = ([System.Uri]$BundledOptCuts).AbsoluteUri
-        $BundledOptCutsSha = (Get-FileHash $BundledOptCuts -Algorithm SHA256).Hash.ToLower()
-        Invoke-External $OptCutsInstaller @(
-            "--platform", "windows-x86_64",
-            "--url", $BundledOptCutsUri,
-            "--checksum", $BundledOptCutsSha,
-            "--install-dir", $OptCutsDir,
-            "--force"
-        )
+        Copy-Item -Force $BundledOptCuts $OptCutsExe
     }
     else {
+        if (!(Test-Path $OptCutsInstaller)) {
+            throw "topoppi-install-optcuts was not installed at $OptCutsInstaller."
+        }
         Invoke-External $OptCutsInstaller @("--platform", "windows-x86_64", "--install-dir", $OptCutsDir, "--force")
     }
 
-    $OptCutsExe = Join-Path $OptCutsDir "OptCuts_bin.exe"
     if (!(Test-Path $OptCutsExe)) {
         throw "OptCuts was not installed at $OptCutsExe."
     }
 
     Write-Step "Writing launchers"
-    $GuiLauncher = @"
-@echo off
-set "TOPOPPI_HOME=$InstallDir"
-set "TOPOPPI_OPTCUTS_BIN=$OptCutsExe"
-"$EnvDir\Scripts\topoppi-gui.exe" %*
-"@
-    Set-Content -Path (Join-Path $InstallDir "TopoPPI GUI.cmd") -Value $GuiLauncher -Encoding ASCII
-
+    Remove-Item (Join-Path $InstallDir "TopoPPI GUI.cmd") -Force -ErrorAction SilentlyContinue
     $CliLauncher = @"
 @echo off
 set "TOPOPPI_HOME=$InstallDir"
@@ -148,6 +137,19 @@ set "TOPOPPI_OPTCUTS_BIN=$OptCutsExe"
 "$EnvDir\Scripts\topoppi.exe" %*
 "@
     Set-Content -Path (Join-Path $InstallDir "TopoPPI CLI.cmd") -Value $CliLauncher -Encoding ASCII
+
+    $CommandPromptLauncher = @"
+@echo off
+set "TOPOPPI_HOME=$InstallDir"
+set "TOPOPPI_OPTCUTS_BIN=$OptCutsExe"
+set "PATH=$EnvDir\Scripts;$EnvDir;%PATH%"
+cd /d "$InstallDir"
+echo TopoPPI $Version command prompt
+echo Run topoppi --help to see the available commands.
+echo Run exit or close this window when you are finished.
+cmd.exe /K
+"@
+    Set-Content -Path (Join-Path $InstallDir "TopoPPI Command Prompt.cmd") -Value $CommandPromptLauncher -Encoding ASCII
 
     Write-Step "TopoPPI installation finished"
 }

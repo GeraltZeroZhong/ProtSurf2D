@@ -1,0 +1,69 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+contents_dir="$(cd "$(dirname "$0")/.." && pwd)"
+version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$contents_dir/Info.plist")"
+architecture="$(/usr/libexec/PlistBuddy -c 'Print :TopoPPIArchitecture' "$contents_dir/Info.plist")"
+runtime_dir="$HOME/Library/Application Support/TopoPPI/$version-$architecture"
+environment_dir="$runtime_dir/environment"
+log_dir="$HOME/Library/Logs/TopoPPI"
+log_file="$log_dir/launcher.log"
+wait_dialog_pid=""
+
+mkdir -p "$log_dir"
+
+close_wait_dialog() {
+    if [[ -n "$wait_dialog_pid" ]] && kill -0 "$wait_dialog_pid" 2>/dev/null; then
+        kill "$wait_dialog_pid" 2>/dev/null || true
+        wait "$wait_dialog_pid" 2>/dev/null || true
+    fi
+    wait_dialog_pid=""
+}
+
+show_startup_error() {
+    local message
+    close_wait_dialog
+    printf -v message 'TopoPPI could not finish startup. Details were written to:\n\n%s\n\nTo rebuild the bundled runtime, remove:\n\n%s\n\nThen open TopoPPI again.' "$log_file" "$runtime_dir"
+    /usr/bin/osascript - "$message" <<'APPLESCRIPT' >/dev/null 2>&1 || true
+on run argv
+    display dialog (item 1 of argv) buttons {"OK"} default button "OK" with title "TopoPPI" with icon stop
+end run
+APPLESCRIPT
+}
+
+handle_startup_error() {
+    local exit_code=$?
+    trap - ERR
+    printf 'TopoPPI startup failed with exit code %s at %s\n' "$exit_code" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$log_file"
+    show_startup_error
+    exit "$exit_code"
+}
+
+trap handle_startup_error ERR
+
+if [[ ! -f "$runtime_dir/.ready" ]]; then
+    /usr/bin/osascript - "$runtime_dir" <<'APPLESCRIPT' >/dev/null 2>&1 &
+on run argv
+    display dialog "TopoPPI is preparing its bundled runtime for the first launch. This can take several minutes. You can leave this window open while setup finishes." & return & return & "Runtime location:" & return & (item 1 of argv) buttons {"Continue in background"} default button "Continue in background" with title "TopoPPI"
+end run
+APPLESCRIPT
+    wait_dialog_pid=$!
+
+    printf 'Preparing TopoPPI %s runtime for %s at %s\n' "$version" "$architecture" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$log_file"
+    rm -rf "$environment_dir"
+    rm -f "$runtime_dir/.ready" "$runtime_dir/OptCuts_bin"
+    mkdir -p "$environment_dir"
+    {
+        tar -xzf "$contents_dir/Resources/environment.tar.gz" -C "$environment_dir"
+        "$environment_dir/bin/python" "$environment_dir/bin/conda-unpack"
+        install -m 755 "$contents_dir/Resources/OptCuts_bin" "$runtime_dir/OptCuts_bin"
+    } >>"$log_file" 2>&1
+    touch "$runtime_dir/.ready"
+    printf 'TopoPPI runtime preparation completed at %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$log_file"
+    close_wait_dialog
+fi
+
+export TOPOPPI_HOME="$HOME/Library/Application Support/TopoPPI"
+export TOPOPPI_OPTCUTS_BIN="$runtime_dir/OptCuts_bin"
+export PATH="$environment_dir/bin:$PATH"
+"$environment_dir/bin/python" -m topoppi.gui "$@" >>"$log_file" 2>&1

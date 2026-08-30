@@ -1,6 +1,6 @@
 #define MyAppName "TopoPPI"
 #ifndef MyAppVersion
-#define MyAppVersion "1.2"
+#define MyAppVersion "1.3"
 #endif
 #ifndef MyPackageSpec
 #define MyPackageSpec ""
@@ -30,21 +30,57 @@ UninstallDisplayIcon={app}\installer\assets\topoppi.ico
 [Files]
 Source: "install_topoppi.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "uninstall_topoppi.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "launch_gui.pyw"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\src\topoppi\assets\topoppi.ico"; DestDir: "{app}\installer\assets"; Flags: ignoreversion
+Source: "..\..\LICENSE"; DestDir: "{app}\licenses"; DestName: "TopoPPI-LICENSE.txt"; Flags: ignoreversion
+Source: "..\..\tools\OptCuts\LICENSE.txt"; DestDir: "{app}\licenses"; DestName: "OptCuts-LICENSE.txt"; Flags: ignoreversion
+Source: "..\..\tools\OptCuts\NOTICE.md"; DestDir: "{app}\licenses"; DestName: "OptCuts-NOTICE.md"; Flags: ignoreversion
+Source: "..\..\tools\OptCuts\THIRD_PARTY_LICENSES.txt"; DestDir: "{app}\licenses"; DestName: "OptCuts-THIRD-PARTY-LICENSES.txt"; Flags: ignoreversion
 #ifexist "OptCuts_bin-windows-x86_64.exe"
 Source: "OptCuts_bin-windows-x86_64.exe"; DestDir: "{app}\installer\assets"; Flags: ignoreversion
 #endif
-#ifexist "OptCuts_bin-windows-x86_64.exe.sha256"
-Source: "OptCuts_bin-windows-x86_64.exe.sha256"; DestDir: "{app}\installer\assets"; Flags: ignoreversion
-#endif
-
-[Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\install_topoppi.ps1"" -InstallDir ""{app}"" -Version ""{#MyAppVersion}"" -PackageSpec ""{#MyPackageSpec}"""; Description: "Install TopoPPI environment"; Flags: waituntilterminated
 
 [Icons]
-Name: "{group}\TopoPPI GUI"; Filename: "{app}\TopoPPI GUI.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\installer\assets\topoppi.ico"
-Name: "{group}\TopoPPI CLI"; Filename: "{app}\TopoPPI CLI.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\installer\assets\topoppi.ico"
+Name: "{group}\TopoPPI GUI"; Filename: "{app}\env\pythonw.exe"; Parameters: """{app}\launch_gui.pyw"""; WorkingDir: "{app}"; IconFilename: "{app}\installer\assets\topoppi.ico"
+Name: "{group}\TopoPPI Command Prompt"; Filename: "{app}\TopoPPI Command Prompt.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\installer\assets\topoppi.ico"
 Name: "{group}\Uninstall TopoPPI"; Filename: "{uninstallexe}"; IconFilename: "{app}\installer\assets\topoppi.ico"
+
+[InstallDelete]
+Type: files; Name: "{group}\TopoPPI CLI.lnk"
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\uninstall_topoppi.ps1"" -InstallDir ""{app}"""; Flags: waituntilterminated runhidden
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Parameters: String;
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+
+  Parameters :=
+    '-NoProfile -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{app}\installer\install_topoppi.ps1') +
+    '" -InstallDir "' + ExpandConstant('{app}') +
+    '" -Version "{#MyAppVersion}" -PackageSpec "{#MyPackageSpec}"';
+
+  if not Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    Parameters,
+    ExpandConstant('{app}'),
+    SW_SHOWNORMAL,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) then
+    RaiseException('TopoPPI could not start its environment setup.');
+
+  if ResultCode <> 0 then
+    RaiseException(
+      Format(
+        'TopoPPI environment setup failed with exit code %d. Review the PowerShell output, then run the installer again.',
+        [ResultCode]
+      )
+    );
+end;
