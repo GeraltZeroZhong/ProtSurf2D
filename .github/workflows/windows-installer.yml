@@ -151,7 +151,7 @@ jobs:
 
           $env:MPLBACKEND = "Agg"
           $smokeOutput = Join-Path $env:RUNNER_TEMP "topoppi-windows-smoke.png"
-          & $cli tests\fixtures\1bvk.pdb -A A -B B `
+          & $cli tests\fixtures\tiny_complex.pdb -A A -B B `
             --prolif tests\fixtures\prolif_interactions.json `
             --min-points 1 `
             -o $smokeOutput

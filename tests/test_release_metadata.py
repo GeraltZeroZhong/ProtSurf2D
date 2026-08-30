@@ -140,6 +140,9 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn('"/DIR=`"$installDir`""', windows)
         self.assertIn('"/LOG=`"$installLog`""', windows)
         self.assertIn('"TopoPPI Installed"', windows)
+        self.assertIn(r"tests\fixtures\tiny_complex.pdb", windows)
+        self.assertNotIn(r"tests\fixtures\1bvk.pdb", windows)
+        self.assertIn("tests/fixtures/1bvk.pdb", macos)
         self.assertIn('"cmake<4"', macos)
         self.assertEqual(macos.count('export PATH="$RUNNER_TEMP/topoppi-macos-build/bin:$PATH"'), 2)
 
