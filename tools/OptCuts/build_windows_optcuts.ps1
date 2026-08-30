@@ -212,7 +212,8 @@ foreach ($ExpectedMetadata in @(
 $Hash = (Get-FileHash $Artifact -Algorithm SHA256).Hash.ToLower()
 "$Hash  OptCuts_bin-windows-x86_64.exe" | Set-Content "$Artifact.sha256" -Encoding ASCII
 
-$InputMesh = Join-Path $SourceDir "input\bimba_i_f10000.obj"
+$InputMesh = "windows-artifact-smoke.obj"
+Copy-Item -Force (Join-Path $SourceDir "input\bimba_i_f10000.obj") (Join-Path $WorkRoot $InputMesh)
 Push-Location $WorkRoot
 try {
     Invoke-External $Artifact @("100", $InputMesh, "0.999", "1", "0", "4.1", "1", "0", "windowsArtifactSmoke")

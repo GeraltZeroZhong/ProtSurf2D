@@ -131,6 +131,7 @@ class ReleaseMetadataTests(unittest.TestCase):
             self.assertIn("root.update_idletasks()", workflow)
         self.assertIn("TopoPPI Command Prompt.lnk", windows)
         self.assertIn("& $cli --version", windows)
+        self.assertIn('"cmake<4"', macos)
 
     @unittest.skipUnless(
         (ROOT / "tools" / "OptCuts" / "OptCuts_bin").is_file(),

@@ -65,7 +65,7 @@ jobs:
       - name: Install build tools
         shell: bash -el {0}
         run: |
-          micromamba create -y -p "$RUNNER_TEMP/topoppi-macos-build" conda-pack cmake
+          micromamba create -y -p "$RUNNER_TEMP/topoppi-macos-build" conda-pack "cmake<4"
           echo "$RUNNER_TEMP/topoppi-macos-build/bin" >> "$GITHUB_PATH"
 
       - name: Install TopoPPI
