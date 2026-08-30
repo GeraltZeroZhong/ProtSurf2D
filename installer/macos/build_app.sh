@@ -72,10 +72,10 @@ raw_environment="$build_root/environment.raw.tar.gz"
 packed_environment="$build_root/environment"
 conda-pack \
     -p "$environment_prefix" \
-    -o "$raw_environment"
+    -o "$raw_environment" \
+    --exclude 'lib/python*/site-packages/topoppi-*.dist-info/direct_url.json'
 mkdir -p "$packed_environment"
 tar -xzf "$raw_environment" -C "$packed_environment"
-find "$packed_environment" -type f -path '*/topoppi-*.dist-info/direct_url.json' -delete
 find "$packed_environment" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 find "$packed_environment" -type d -name __pycache__ -prune -exec rm -rf {} +
 rm -rf "$packed_environment/conda-meta"

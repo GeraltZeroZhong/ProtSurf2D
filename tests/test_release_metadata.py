@@ -99,7 +99,11 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("OptCuts-LICENSE.txt", build_script)
         self.assertIn("OptCuts-NOTICE.md", build_script)
         self.assertIn("OptCuts-THIRD-PARTY-LICENSES.txt", build_script)
-        self.assertIn('find "$packed_environment" -type f -path', build_script)
+        self.assertIn(
+            "--exclude 'lib/python*/site-packages/topoppi-*.dist-info/direct_url.json'",
+            build_script,
+        )
+        self.assertNotIn("direct_url.json' -delete", build_script)
         self.assertNotIn('find "$environment_prefix" -type f -path', build_script)
 
     def test_formal_example_uses_the_release_optcuts_artifact(self):
