@@ -79,6 +79,7 @@ jobs:
       - name: Build native OptCuts
         shell: bash -el {0}
         run: |
+          export PATH="$RUNNER_TEMP/topoppi-macos-build/bin:$PATH"
           mkdir -p release-assets
           bash tools/OptCuts/build_residue_aware_optcuts.sh \
             "release-assets/OptCuts_bin-macos-${{ matrix.architecture }}"
@@ -129,6 +130,7 @@ jobs:
         id: image
         shell: bash -el {0}
         run: |
+          export PATH="$RUNNER_TEMP/topoppi-macos-build/bin:$PATH"
           bash installer/macos/build_app.sh \
             "${{ steps.version.outputs.value }}" \
             "${{ matrix.architecture }}" \

@@ -132,6 +132,7 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("TopoPPI Command Prompt.lnk", windows)
         self.assertIn("& $cli --version", windows)
         self.assertIn('"cmake<4"', macos)
+        self.assertEqual(macos.count('export PATH="$RUNNER_TEMP/topoppi-macos-build/bin:$PATH"'), 2)
 
     @unittest.skipUnless(
         (ROOT / "tools" / "OptCuts" / "OptCuts_bin").is_file(),
