@@ -358,7 +358,7 @@ class OptCutsUVOptimizer:
                 cmd = [
                     resolved_bin,
                     str(int(self.config.optcuts_mode)),  # mode
-                    in_obj,  # input mesh path
+                    os.path.basename(in_obj),  # input mesh in tmpdir
                     f"{float(lambda_init):.17g}",  # lambda_init
                     str(int(self.config.optcuts_prog_mode)),  # testID
                     str(int(self.config.optcuts_method_type)),  # methodType

@@ -27,6 +27,7 @@ class OptCutsOptimizerTests(unittest.TestCase):
         binary.write_text(
             "#!/usr/bin/env python3\n"
             "import os, shutil, sys\n"
+            "assert os.path.basename(sys.argv[2]) == sys.argv[2], sys.argv[2]\n"
             "os.makedirs('output', exist_ok=True)\n"
             "shutil.copy2(sys.argv[2], 'output/finalResult_mesh.obj')\n"
             f"{marker}\n",
