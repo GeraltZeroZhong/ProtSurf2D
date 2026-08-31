@@ -35,17 +35,15 @@ dependencies = [
   "rtree>=1.0",
   "shapely>=1.8",
   "libigl>=2.6,<2.7",
+  "MDAnalysis>=2.0",
+  "prolif>=2.0",
+  "rdkit>=2023.9",
 ]
 
 [project.optional-dependencies]
 benchmark = [
   "psutil>=5.9",
   "tqdm>=4.60",
-]
-interactions = [
-  "MDAnalysis>=2.0",
-  "prolif>=2.0",
-  "rdkit>=2023.9",
 ]
 meshio = [
   "meshio>=5.0",
@@ -60,9 +58,6 @@ dev = [
 all = [
   "psutil>=5.9",
   "tqdm>=4.60",
-  "MDAnalysis>=2.0",
-  "prolif>=2.0",
-  "rdkit>=2023.9",
   "meshio>=5.0",
 ]
 
@@ -74,6 +69,7 @@ Issues = "https://github.com/GeraltZeroZhong/TopoPPI/issues"
 [project.scripts]
 topoppi = "topoppi.cli:main"
 topoppi-gui = "topoppi.gui:main"
+topoppi-benchmark = "topoppi.benchmark_cli:main"
 topoppi-install-optcuts = "topoppi.install_optcuts:main"
 
 [tool.setuptools]

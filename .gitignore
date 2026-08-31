@@ -19,6 +19,13 @@ ENV/
 build/
 dist/
 *.egg-info/
+release-assets/
+.optcuts-windows-build/
+installer/windows/Output/
+installer/windows/OptCuts_bin-windows-x86_64.exe
+installer/windows/OptCuts_bin-windows-x86_64.exe.sha256
+tools/OptCuts/*.so
+tools/OptCuts/OptCuts_reproducible_bin
 
 # Conda local environment directories
 .conda/
@@ -39,10 +46,15 @@ TopoPPI_icon_assets/
 tmp/
 temp/
 *.tmp
+.internal/
+
+# Local release and reproducibility notes
+docs/release_checklist.md
+docs/reproducibility.md
 
 # Local visual inspection artifacts
 docs/assets/*
-!docs/assets/3ff22687bd403a67cd66caeacc95baee.png
+!docs/assets/topoppi-gui-sanitized.png
 
 # TopoPPI generated outputs
 interface_map.png
@@ -50,14 +62,35 @@ interface_map.png
 *_interface_optcuts.png
 *_with_prolif.png
 *.prolif.json
+*.prolif.csv
+*.topoppi.json
+*_cutoff*_res*_sigma*_min*_*.png
+*_cutoff*_res*_sigma*_min*_*.tif
+*_cutoff*_res*_sigma*_min*_*.tiff
 tests/fixtures/*_cutoff*_res*_sigma*_min*_*.png
 tests/fixtures/*_cutoff*_res*_sigma*_min*_*.topoppi.json
 benchmark_results/
 benchmark_results_*/
+benchmark_preflight.json
 benchmark_report.json
 benchmark_summary.csv
 benchmark_checkpoint.json
+benchmark_manifest.csv
+benchmark_failures.csv
+benchmark_per_patch.csv
+benchmark_per_face_sample.csv
+benchmark_per_residue.csv.gz
+benchmark_provenance.csv.gz
+benchmark_optcuts_executions.jsonl.gz
+benchmark_artifact_checksums.json
+worker_logs/
+sensitivity_study/
+sensitivity_plan.json
+sensitivity_preflight.json
+sensitivity_results.json
+sensitivity_summary.csv
 optcuts_frames/
+*_optcuts_frames_*/
 
 # OptCuts runtime outputs
 finalResult_mesh.obj

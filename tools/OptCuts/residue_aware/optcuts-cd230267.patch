@@ -1,0 +1,504 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index eae9c9b..e85fe12 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -39,6 +39,7 @@ file(GLOB SRCFILES
+   src/main.cpp
+   src/Optimizer.cpp
+   src/TriMesh.cpp
++  src/ResidueFootprintEnergy.cpp
+   src/Scaffold.cpp
+ 
+   src/Energy/Energy.cpp
+diff --git a/src/TriMesh.cpp b/src/TriMesh.cpp
+index 6c17cfc..21eadff 100755
+--- a/src/TriMesh.cpp
++++ b/src/TriMesh.cpp
+@@ -53,6 +53,7 @@ namespace OptCuts {
+             // compute triangle matrix to save rest shapes
+             V_rest.resize(F_mesh.rows() * F_mesh.cols(), 3);
+             V.resize(F_mesh.rows() * F_mesh.cols(), 2);
++            sourceVertex.resize(F_mesh.rows() * F_mesh.cols());
+             F.resize(F_mesh.rows(), F_mesh.cols());
+             std::map<std::pair<int, int>, Eigen::Vector3i> edge2DupInd;
+             int cohEAmt = 0;
+@@ -70,6 +71,9 @@ namespace OptCuts {
+                 V_rest.row(vDupIndStart) = V_mesh.row(F_mesh.row(triI)[0]);
+                 V_rest.row(vDupIndStart + 1) = V_mesh.row(F_mesh.row(triI)[1]);
+                 V_rest.row(vDupIndStart + 2) = V_mesh.row(F_mesh.row(triI)[2]);
++                sourceVertex[vDupIndStart] = F_mesh(triI, 0);
++                sourceVertex[vDupIndStart + 1] = F_mesh(triI, 1);
++                sourceVertex[vDupIndStart + 2] = F_mesh(triI, 2);
+                 
+                 F(triI, 0) = vDupIndStart;
+                 F(triI, 1) = vDupIndStart + 1;
+@@ -118,6 +122,7 @@ namespace OptCuts {
+                 V_rest = V_mesh;
+                 V = UV_mesh;
+                 F = F_mesh;
++                sourceVertex = Eigen::VectorXi::LinSpaced(V_mesh.rows(), 0, V_mesh.rows() - 1);
+             }
+             else if(UV_mesh.rows() != 0) {
+                 // different vertex and uv index, split 3D surface according to UV and merge back while saving into files
+@@ -165,6 +170,7 @@ namespace OptCuts {
+                 }
+                 
+                 V_rest.resize(UV_mesh.rows(), 3);
++                sourceVertex.resize(UV_mesh.rows());
+                 V = UV_mesh;
+                 F = FUV_mesh;
+                 std::vector<bool> updated(UV_mesh.rows(), false);
+@@ -174,6 +180,7 @@ namespace OptCuts {
+                     for(int vI = 0; vI < 3; vI++) {
+                         if(!updated[triVInd_UV[vI]]) {
+                             V_rest.row(triVInd_UV[vI]) = V_mesh.row(triVInd[vI]);
++                            sourceVertex[triVInd_UV[vI]] = triVInd[vI];
+                             updated[triVInd_UV[vI]] = true;
+                         }
+                     }
+@@ -194,6 +201,7 @@ namespace OptCuts {
+                 V_rest = V_mesh;
+                 F = F_mesh;
+                 V = Eigen::MatrixXd::Zero(V_rest.rows(), 2);
++                sourceVertex = Eigen::VectorXi::LinSpaced(V_mesh.rows(), 0, V_mesh.rows() - 1);
+                 std::cout << "No UV provided, initialized to all 0" << std::endl;
+             }
+         }
+@@ -291,6 +299,7 @@ namespace OptCuts {
+             *this = TriMesh(V_rest, F, V);
+         }
+         else {
++            sourceVertex = Eigen::VectorXi::LinSpaced(V_rest.rows(), 0, V_rest.rows() - 1);
+             computeFeatures(false, true);
+         }
+         initSeamLen = 0.0;
+@@ -544,6 +553,58 @@ namespace OptCuts {
+         
+         computeFeatures();
+     }
++
++    void TriMesh::configureResidueFootprintEnergy(const std::string& path, double weight)
++    {
++        if(weight <= 0.0) {
++            residueFootprintWeight = 0.0;
++            return;
++        }
++        residueFootprintEnergy = TopoPPI::ResidueFootprintEnergy::load(path);
++        residueFootprintWeight = weight;
++        synchronizeResidueFootprints();
++        std::cout << "residue footprint energy enabled, weight=" << residueFootprintWeight
++                  << ", cycle rank=" << residueFootprintEnergy.cycleRank()
++                  << ", initial score=" << residueFootprintEnergy.score() << std::endl;
++    }
++
++    double TriMesh::residueFootprintScore(void) const
++    {
++        return residueFootprintWeight > 0.0 ? residueFootprintEnergy.score() : 0.0;
++    }
++
++    std::vector<TopoPPI::FootprintEdgeChange> TriMesh::residueFootprintChanges(
++        const std::vector<int>& path, bool cut) const
++    {
++        std::vector<TopoPPI::FootprintEdgeChange> changes;
++        if(residueFootprintWeight <= 0.0) {
++            return changes;
++        }
++        for(int index = 0; index + 1 < static_cast<int>(path.size()); ++index) {
++            const int edge = residueFootprintEnergy.edgeId(
++                sourceVertex[path[index]], sourceVertex[path[index + 1]]);
++            if(edge >= 0) {
++                changes.push_back(TopoPPI::FootprintEdgeChange(edge, cut));
++            }
++        }
++        return changes;
++    }
++
++    void TriMesh::synchronizeResidueFootprints(void)
++    {
++        if(residueFootprintWeight <= 0.0) {
++            return;
++        }
++        std::vector<int> faceVertices;
++        faceVertices.reserve(F.rows() * 3);
++        for(int face = 0; face < F.rows(); ++face) {
++            for(int corner = 0; corner < 3; ++corner) {
++                faceVertices.push_back(F(face, corner));
++            }
++        }
++        std::vector<int> sources(sourceVertex.data(), sourceVertex.data() + sourceVertex.size());
++        residueFootprintEnergy.synchronize(faceVertices, sources);
++    }
+     
+     void TriMesh::querySplit(double lambda_t, bool propagate, bool splitInterior,
+                                   double& EwDec_max, std::vector<int>& path_max, Eigen::MatrixXd& newVertPos_max,
+@@ -1470,6 +1537,8 @@ namespace OptCuts {
+             int nV = static_cast<int>(V_rest.rows());
+             V_rest.conservativeResize(nV + 1, 3);
+             V_rest.row(nV) = V_rest.row(path[1]);
++            sourceVertex.conservativeResize(nV + 1);
++            sourceVertex[nV] = sourceVertex[path[1]];
+             vertWeight.conservativeResize(nV + 1);
+             vertWeight[nV] = vertWeight[path[1]];
+             V.conservativeResize(nV + 1, 2);
+@@ -1496,6 +1565,7 @@ namespace OptCuts {
+             }
+             
+             computeFeatures(); //TODO: only update locally
++            synchronizeResidueFootprints();
+             
+             for(int vI = 2; vI + 1 < path.size(); vI++) {
+                 int vInd_s = path[vI];
+@@ -2122,12 +2192,14 @@ namespace OptCuts {
+                     virtualRadius * (vertWeight[path_max[0]] + vertWeight[path_max[1]]) / 2.0;
+                 // closing up splitted diamond
+                 bool closeup = false;
++                int closeupNeighbor = -1;
+                 for(const auto& nbVI : vNeighbor[path_max[0]]) {
+                     if(nbVI != path_max[1]) {
+                         if(isBoundaryVert(nbVI)) {
+                             if(vNeighbor[path_max[2]].find(nbVI) != vNeighbor[path_max[2]].end()) {
+                                 seDec += (V_rest.row(path_max[0]) - V_rest.row(nbVI)).norm() / virtualRadius * (vertWeight[path_max[0]] + vertWeight[nbVI]) / 2.0;
+                                 closeup = true;
++                                closeupNeighbor = nbVI;
+                                 break;
+                             }
+                         }
+@@ -2143,8 +2215,19 @@ namespace OptCuts {
+                 mergeVert[path_max[2]] = path_max[0];
+                 std::map<int, Eigen::RowVector2d> newVertPos;
+                 const double SDInc = -computeLocalEdDec_merge(path_max, incTris, freeVert, newVertPos, mergeVert, initMergedPos, closeup);
++                std::vector<TopoPPI::FootprintEdgeChange> footprintChanges =
++                    residueFootprintChanges(path_max, false);
++                if(closeupNeighbor >= 0) {
++                    const int closeupEdge = residueFootprintEnergy.edgeId(
++                        sourceVertex[path_max[0]], sourceVertex[closeupNeighbor]);
++                    if(closeupEdge >= 0) {
++                        footprintChanges.push_back(TopoPPI::FootprintEdgeChange(closeupEdge, false));
++                    }
++                }
++                const double footprintChange = residueFootprintWeight *
++                    residueFootprintEnergy.candidateDelta(footprintChanges);
+                 energyChanges_max.first = SDInc;
+-                energyChanges_max.second = -seDec;
++                energyChanges_max.second = -seDec + footprintChange;
+                 if(SDInc == __DBL_MAX__) {
+                     return -__DBL_MAX__;
+                 }
+@@ -2154,7 +2237,7 @@ namespace OptCuts {
+                     newVertPos_max.resize(1, 2);
+                     newVertPos_max.row(0) = finder->second;
+                     
+-                    return lambda_t * seDec - (1.0 - lambda_t) * SDInc;
++                    return lambda_t * (seDec - footprintChange) - (1.0 - lambda_t) * SDInc;
+                 }
+             }
+             else {
+@@ -2183,14 +2266,19 @@ namespace OptCuts {
+                     
+                     const double seInc = (V_rest.row(vI) - V_rest.row(nbVI)).norm() /
+                         virtualRadius * (vertWeight[vI] + vertWeight[nbVI]) / 2.0;
+-                    const double curEwDec = (1.0 - lambda_t) * SDDec - lambda_t * seInc;
++                    const std::vector<int> footprintPath = {vI, nbVI};
++                    const double footprintChange = residueFootprintWeight *
++                        residueFootprintEnergy.candidateDelta(
++                            residueFootprintChanges(footprintPath, true));
++                    const double combinedSeamIncrease = seInc + footprintChange;
++                    const double curEwDec = (1.0 - lambda_t) * SDDec - lambda_t * combinedSeamIncrease;
+                     if(curEwDec > maxEwDec) {
+                         maxEwDec = curEwDec;
+                         path_max[0] = vI;
+                         path_max[1] = nbVI;
+                         newVertPos_max = newVertPosI;
+                         energyChanges_max.first = -SDDec;
+-                        energyChanges_max.second = seInc;
++                        energyChanges_max.second = combinedSeamIncrease;
+                     }
+                 }
+             }
+@@ -2245,13 +2333,17 @@ namespace OptCuts {
+                     
+                     const double seInc = ((V_rest.row(path[0]) - V_rest.row(path[1])).norm() * (vertWeight[path[0]] + vertWeight[path[1]]) +
+                                           (V_rest.row(path[1]) - V_rest.row(path[2])).norm() * (vertWeight[path[1]] + vertWeight[path[2]])) / virtualRadius / 2.0;
+-                    const double EwDec = (1.0 - lambda_t) * SDDec - lambda_t * seInc;
++                    const double footprintChange = residueFootprintWeight *
++                        residueFootprintEnergy.candidateDelta(
++                            residueFootprintChanges(path, true));
++                    const double combinedSeamIncrease = seInc + footprintChange;
++                    const double EwDec = (1.0 - lambda_t) * SDDec - lambda_t * combinedSeamIncrease;
+                     if(EwDec > EwDec_max) {
+                         EwDec_max = EwDec;
+                         newVertPos_max = newVertPos;
+                         path_max = path;
+                         energyChanges_max.first = -SDDec;
+-                        energyChanges_max.second = seInc;
++                        energyChanges_max.second = combinedSeamIncrease;
+                     }
+                 }
+             }
+@@ -2913,6 +3005,8 @@ namespace OptCuts {
+         int nV = static_cast<int>(V_rest.rows());
+         V_rest.conservativeResize(nV + 1, 3);
+         V_rest.row(nV) = V_rest.row(vI_boundary);
++        sourceVertex.conservativeResize(nV + 1);
++        sourceVertex[nV] = sourceVertex[vI_boundary];
+         vertWeight.conservativeResize(nV + 1);
+         vertWeight[nV] = vertWeight[vI_boundary];
+         V.conservativeResize(nV + 1, 2);
+@@ -2977,6 +3071,8 @@ namespace OptCuts {
+             int nV = static_cast<int>(V_rest.rows());
+             V_rest.conservativeResize(nV + 1, 3);
+             V_rest.row(nV) = V_rest.row(vI_interior);
++            sourceVertex.conservativeResize(nV + 1);
++            sourceVertex[nV] = sourceVertex[vI_interior];
+             vertWeight.conservativeResize(nV + 1);
+             vertWeight[nV] = vertWeight[vI_interior];
+             V.conservativeResize(nV + 1, 2);
+@@ -3033,6 +3129,7 @@ namespace OptCuts {
+                 cohEIndex.erase(CEIfinder);
+             }
+         }
++        synchronizeResidueFootprints();
+     }
+     
+     void TriMesh::mergeBoundaryEdges(const std::pair<int, int>& edge0, const std::pair<int, int>& edge1,
+@@ -3051,6 +3148,7 @@ namespace OptCuts {
+         int vBackI = static_cast<int>(V.rows()) - 1;
+         if(edge1.second < vBackI) {
+             V_rest.row(edge1.second) = V_rest.row(vBackI);
++            sourceVertex[edge1.second] = sourceVertex[vBackI];
+             vertWeight[edge1.second] = vertWeight[vBackI];
+             V.row(edge1.second) = V.row(vBackI);
+             
+@@ -3064,6 +3162,7 @@ namespace OptCuts {
+             assert(edge1.second == vBackI);
+         }
+         V_rest.conservativeResize(vBackI, 3);
++        sourceVertex.conservativeResize(vBackI);
+         vertWeight.conservativeResize(vBackI);
+         V.conservativeResize(vBackI, 2);
+         
+@@ -3177,6 +3276,7 @@ namespace OptCuts {
+                break;
+            }
+         }
++        synchronizeResidueFootprints();
+         
+         //TODO: locally update edge2Tri, vNeighbor, cohEIndex
+     }
+diff --git a/src/TriMesh.hpp b/src/TriMesh.hpp
+index 4c43471..71ad1b5 100755
+--- a/src/TriMesh.hpp
++++ b/src/TriMesh.hpp
+@@ -10,6 +10,8 @@
+ 
+ #include <Eigen/Eigen>
+ 
++#include "ResidueFootprintEnergy.hpp"
++
+ #include <set>
+ #include <array>
+ 
+@@ -56,6 +58,9 @@ namespace OptCuts{
+         std::set<int> fixedVert; // for linear solve
+         Eigen::Matrix<double, 2, 3> bbox;
+         Eigen::VectorXd vertWeight; // for regional seam placement
++        Eigen::VectorXi sourceVertex; // original input vertex id for every current duplicate
++        TopoPPI::ResidueFootprintEnergy residueFootprintEnergy;
++        double residueFootprintWeight = 0.0;
+         
+         // indices for fast access
+         std::map<std::pair<int, int>, int> edge2Tri;
+@@ -84,6 +89,8 @@ namespace OptCuts{
+         void updateFeatures(void);
+         void resetFixedVert(const std::set<int>& p_fixedVert);
+         void buildCohEfromRecord(const Eigen::MatrixXi& cohERecord);
++        void configureResidueFootprintEnergy(const std::string& path, double weight);
++        double residueFootprintScore(void) const;
+         
+         void querySplit(double lambda_t, bool propagate, bool splitInterior,
+                         double& EwDec_max, std::vector<int>& path_max, Eigen::MatrixXd& newVertPos_max,
+@@ -154,6 +161,9 @@ namespace OptCuts{
+                                 std::pair<double, double>& energyChanges,
+                                 const std::vector<int>& incTris = std::vector<int>(),
+                                 const Eigen::RowVector2d& initMergedPos = Eigen::RowVector2d()) const;
++        std::vector<TopoPPI::FootprintEdgeChange> residueFootprintChanges(
++            const std::vector<int>& path, bool cut) const;
++        void synchronizeResidueFootprints(void);
+         // query interior incident edge of a boundary vertex candidate
+         double queryLocalEdDec_bSplit(const std::pair<int, int>& edge,
+                                       Eigen::MatrixXd& newVertPos) const;
+diff --git a/src/main.cpp b/src/main.cpp
+index fbf4b3c..1e3d653 100755
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -31,3 +31,4 @@
++#include <cstdlib>
+ #include <fstream>
+ #include <string>
+ #include <ctime>
+@@ -621,13 +622,16 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+ {
+     Eigen::MatrixXd edgeLengths; igl::edge_lengths(triSoup[channel_result]->V_rest, triSoup[channel_result]->F, edgeLengths);
+-    const double eps_E_se = std::max(
++    const double eps_E_topology = std::max(
+         1.0e-6,
+         1.0e-3 * edgeLengths.minCoeff() / triSoup[channel_result]->virtualRadius);
+     
+     // measurement and energy value computation
+     const double E_SD = optimizer->getLastEnergyVal(true) / energyParams[0];
+     double E_se; triSoup[channel_result]->computeSeamSparsity(E_se);
+     E_se /= triSoup[channel_result]->virtualRadius;
++    const double E_fragmentation = triSoup[channel_result]->residueFootprintWeight *
++        triSoup[channel_result]->residueFootprintScore();
++    const double E_topology = E_se + E_fragmentation;
+     double stretch_l2, stretch_inf, stretch_shear, compress_inf;
+     triSoup[channel_result]->computeStandardStretch(stretch_l2, stretch_inf, stretch_shear, compress_inf);
+     double measure_bound = E_SD;
+@@ -635,26 +639,26 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+     // oscillation detection
+     static int iterNum_bestFeasible = -1;
+     static OptCuts::TriMesh triSoup_bestFeasible;
+-    static double E_se_bestFeasible = __DBL_MAX__;
++    static double E_topology_bestFeasible = __DBL_MAX__;
+     static int lastStationaryIterNum = 0; // still necessary because boundary and interior query are with same iterNum
+     static std::map<double, std::vector<std::pair<double, double>>> configs_stationaryV;
+     if(iterNum != lastStationaryIterNum) {
+         // not a roll back config
+         const double lambda = 1.0 - energyParams[0];
+         bool oscillate = false;
+-        const auto low = configs_stationaryV.lower_bound(E_se);
++        const auto low = configs_stationaryV.lower_bound(E_topology);
+         if(low == configs_stationaryV.end()) {
+-            // all less than E_se
++            // all less than E_topology
+             if(!configs_stationaryV.empty()) {
+                 // use largest element
+-                if(std::abs(configs_stationaryV.rbegin()->first - E_se) < eps_E_se)
++                if(std::abs(configs_stationaryV.rbegin()->first - E_topology) < eps_E_topology)
+                 {
+                     for(const auto& lambdaI : configs_stationaryV.rbegin()->second) {
+                         if((std::abs(lambdaI.first - lambda) < eps_lambda) &&
+-                           (std::abs(lambdaI.second - E_SD) < eps_E_se))
++                           (std::abs(lambdaI.second - E_SD) < eps_E_topology))
+                         {
+                             oscillate = true;
+                             logFile << configs_stationaryV.rbegin()->first << ", " << lambdaI.second << std::endl;
+-                            logFile << E_se << ", " << lambda << ", " << E_SD << std::endl;
++                            logFile << E_topology << ", " << lambda << ", " << E_SD << std::endl;
+                             break;
+                         }
+@@ -663,15 +667,15 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+             }
+         }
+         else if(low == configs_stationaryV.begin()) {
+-            // all not less than E_se
+-            if(std::abs(low->first - E_se) < eps_E_se)
++            // all not less than E_topology
++            if(std::abs(low->first - E_topology) < eps_E_topology)
+             {
+                 for(const auto& lambdaI : low->second) {
+                     if((std::abs(lambdaI.first - lambda) < eps_lambda) &&
+-                       (std::abs(lambdaI.second - E_SD) < eps_E_se))
++                       (std::abs(lambdaI.second - E_SD) < eps_E_topology))
+                     {
+                         oscillate = true;
+                         logFile << low->first << ", " << lambdaI.first << ", " << lambdaI.second << std::endl;
+-                        logFile << E_se << ", " << lambda << ", " << E_SD << std::endl;
++                        logFile << E_topology << ", " << lambda << ", " << E_SD << std::endl;
+                         break;
+                     }
+@@ -681,25 +685,25 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+         }
+         else {
+             const auto prev = std::prev(low);
+-            if(std::abs(low->first - E_se) < eps_E_se) {
++            if(std::abs(low->first - E_topology) < eps_E_topology) {
+                 for(const auto& lambdaI : low->second) {
+                     if((std::abs(lambdaI.first - lambda) < eps_lambda) &&
+-                       (std::abs(lambdaI.second - E_SD) < eps_E_se))
++                       (std::abs(lambdaI.second - E_SD) < eps_E_topology))
+                     {
+                         oscillate = true;
+                         logFile << low->first << ", " << lambdaI.first << ", " << lambdaI.second << std::endl;
+-                        logFile << E_se << ", " << lambda << ", " << E_SD << std::endl;
++                        logFile << E_topology << ", " << lambda << ", " << E_SD << std::endl;
+                         break;
+                     }
+                 }
+             }
+-            if((!oscillate) && (std::abs(prev->first - E_se) < eps_E_se)) {
++            if((!oscillate) && (std::abs(prev->first - E_topology) < eps_E_topology)) {
+                 for(const auto& lambdaI : prev->second) {
+                     if((std::abs(lambdaI.first - lambda) < eps_lambda) &&
+-                       (std::abs(lambdaI.second - E_SD) < eps_E_se))
++                       (std::abs(lambdaI.second - E_SD) < eps_E_topology))
+                     {
+                         oscillate = true;
+                         logFile << prev->first << ", " << lambdaI.first << ", " << lambdaI.second << std::endl;
+-                        logFile << E_se << ", " << lambda << ", " << E_SD << std::endl;
++                        logFile << E_topology << ", " << lambda << ", " << E_SD << std::endl;
+                         break;
+                     }
+@@ -708,9 +712,9 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+         }
+         
+         // record best feasible UV map
+-        if((measure_bound <= upperBound) && (E_se < E_se_bestFeasible)) {
++        if((measure_bound <= upperBound) && (E_topology < E_topology_bestFeasible)) {
+             iterNum_bestFeasible = iterNum;
+             triSoup_bestFeasible = *triSoup[channel_result];
+-            E_se_bestFeasible = E_se;
++            E_topology_bestFeasible = E_topology;
+         }
+         
+@@ -726,6 +730,6 @@ bool updateLambda_stationaryV(bool cancelMomentum = true, bool checkConvergence
+             return false;
+         }
+         else {
+-            configs_stationaryV[E_se].emplace_back(std::pair<double, double>(lambda, E_SD));
++            configs_stationaryV[E_topology].emplace_back(std::pair<double, double>(lambda, E_SD));
+         }
+     }
+@@ -1309,6 +1313,8 @@ int main(int argc, char *argv[])
+     //////////////////////////////////
+     // initialize UV
+ 
++    OptCuts::TriMesh* initialTriMesh = NULL;
++
+     if(UV.rows() != 0) {
+         // with input UV
+         OptCuts::TriMesh *temp = new OptCuts::TriMesh(V, F, UV, FUV, false);
+@@ -1372,6 +1378,7 @@ int main(int argc, char *argv[])
+         }
+         
+         triSoup.emplace_back(temp);
++        initialTriMesh = temp;
+         outputFolderPath += meshName + "_input_" + OptCuts::IglUtils::rtos(lambda_init) + "_" +
+             OptCuts::IglUtils::rtos(testID) + "_" +startDS + folderTail;
+     }
+@@ -1531,7 +1538,8 @@ int main(int argc, char *argv[])
+         OptCuts::IglUtils::computeUniformLaplacian(temp.F, A);
+         igl::harmonic(A, M, bnd_stacked, bnd_uv_stacked, 1, UV_Tutte);
+ 
+-        triSoup.emplace_back(new OptCuts::TriMesh(V, F, UV_Tutte, temp.F, false));
++        initialTriMesh = new OptCuts::TriMesh(V, F, UV_Tutte, temp.F, false);
++        triSoup.emplace_back(initialTriMesh);
+         outputFolderPath += meshName + "_Tutte_" + OptCuts::IglUtils::rtos(lambda_init) + "_" + OptCuts::IglUtils::rtos(testID) +
+             "_" + startDS + folderTail;
+     }
+@@ -1568,6 +1576,15 @@ int main(int argc, char *argv[])
+     texScale = 10.0 / (triSoup[0]->bbox.row(1) - triSoup[0]->bbox.row(0)).maxCoeff();
+     energyParams.emplace_back(1.0 - lambda_init);
+     energyTerms.emplace_back(new OptCuts::SymDirichletEnergy());
++
++    const char* footprintSidecar = std::getenv("TOPOPPI_FOOTPRINT_SIDECAR");
++    const char* footprintWeightText = std::getenv("TOPOPPI_FRAGMENTATION_WEIGHT");
++    if(footprintSidecar != NULL && footprintWeightText != NULL) {
++        const double footprintWeight = std::stod(footprintWeightText);
++        if(footprintWeight > 0.0) {
++            initialTriMesh->configureResidueFootprintEnergy(footprintSidecar, footprintWeight);
++        }
++    }
+     
+     optimizer = new OptCuts::Optimizer(*triSoup[0], energyTerms, energyParams, 0, false, bijectiveParam && !rand1PInitCut); // for random one point initial cut, don't need air meshes in the beginning since it's impossible for a quad to intersect itself
+     

@@ -1,0 +1,229 @@
+name: macOS App
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      CONDA_OVERRIDE_OSX: "12.0"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-name: topoppi-macos
+          micromamba-root-path: /tmp/topoppi-micromamba-${{ matrix.architecture }}
+          cache-downloads: true
+          create-args: >-
+            python=3.10
+            tk
+            igl=2.6.*
+            numpy>=1.21
+            scipy
+            biopython
+            scikit-image
+            matplotlib
+            trimesh
+            networkx
+            pillow
+            rtree
+            shapely
+            mdanalysis
+            rdkit
+            psutil
+            tqdm
+            meshio
+            pip
+
+      - name: Read package version
+        id: version
+        shell: bash -el {0}
+        run: |
+          version="$(PYTHONPATH=src python -c 'from topoppi._version import __version__; print(__version__)')"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version v$version." >&2
+            exit 1
+          fi
+          test "$(uname -m)" = "${{ matrix.architecture }}"
+
+      - name: Install build tools
+        shell: bash -el {0}
+        run: |
+          micromamba create -y -p "$RUNNER_TEMP/topoppi-macos-build" conda-pack "cmake<4"
+          echo "$RUNNER_TEMP/topoppi-macos-build/bin" >> "$GITHUB_PATH"
+
+      - name: Install TopoPPI
+        shell: bash -el {0}
+        run: |
+          python -m pip install --no-compile "prolif>=2.0"
+          python -m pip install --no-compile --no-deps .
+          python -c "import MDAnalysis, igl, prolif, rdkit, topoppi; print(topoppi.__version__)"
+          python -m topoppi.cli --help
+
+      - name: Build native OptCuts
+        shell: bash -el {0}
+        run: |
+          export PATH="$RUNNER_TEMP/topoppi-macos-build/bin:$PATH"
+          mkdir -p release-assets
+          bash tools/OptCuts/build_residue_aware_optcuts.sh \
+            "release-assets/OptCuts_bin-macos-${{ matrix.architecture }}"
+          test "$(lipo -archs "release-assets/OptCuts_bin-macos-${{ matrix.architecture }}")" = "${{ matrix.architecture }}"
+          vtool -show-build "release-assets/OptCuts_bin-macos-${{ matrix.architecture }}" \
+            | grep -Eq 'minos +12\.0'
+          if otool -L "release-assets/OptCuts_bin-macos-${{ matrix.architecture }}" \
+            | awk 'NR > 1 {print $1}' \
+            | grep -Ev '^(/usr/lib/|/System/Library/)'; then
+            echo "OptCuts contains a non-system dynamic library dependency." >&2
+            exit 1
+          fi
+
+      - name: Run benchmark preflight on macOS
+        shell: bash -el {0}
+        env:
+          OPTCUTS_BIN: ${{ github.workspace }}/release-assets/OptCuts_bin-macos-${{ matrix.architecture }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path.cwd()
+          payload = json.loads((root / "docs/benchmark_quickstart.example.json").read_text())
+          payload["input_folder"] = str((root / "tests/fixtures").resolve())
+          payload["output_root"] = str(Path(os.environ["RUNNER_TEMP"]) / "benchmark-preflight")
+          payload["optcuts"]["optcuts_bin"] = os.environ["OPTCUTS_BIN"]
+          target = Path(os.environ["RUNNER_TEMP"]) / "benchmark-preflight.json"
+          target.write_text(json.dumps(payload), encoding="utf-8")
+          PY
+          python -m topoppi.benchmark_cli preflight "$RUNNER_TEMP/benchmark-preflight.json"
+
+      - name: Run native pipeline smoke
+        shell: bash -el {0}
+        env:
+          MPLBACKEND: Agg
+        run: |
+          output="$RUNNER_TEMP/topoppi-macos-smoke.png"
+          python -m topoppi.cli tests/fixtures/1bvk.pdb -A A -B B \
+            --prolif tests/fixtures/prolif_interactions.json \
+            --min-points 1 \
+            --optcuts-bin "release-assets/OptCuts_bin-macos-${{ matrix.architecture }}" \
+            -o "$output"
+          test -s "$output"
+
+      - name: Build application disk image
+        id: image
+        shell: bash -el {0}
+        run: |
+          export PATH="$RUNNER_TEMP/topoppi-macos-build/bin:$PATH"
+          bash installer/macos/build_app.sh \
+            "${{ steps.version.outputs.value }}" \
+            "${{ matrix.architecture }}" \
+            "$CONDA_PREFIX" \
+            "release-assets/OptCuts_bin-macos-${{ matrix.architecture }}" \
+            release-assets
+          image="release-assets/TopoPPI-${{ steps.version.outputs.value }}-macos-${{ matrix.architecture }}.dmg"
+          hdiutil verify "$image"
+          echo "path=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Run packaged application lifecycle smoke
+        shell: bash -el {0}
+        env:
+          MPLBACKEND: Agg
+        run: |
+          image="${{ steps.image.outputs.path }}"
+          mount_dir="$(mktemp -d "$RUNNER_TEMP/topoppi-dmg.XXXXXX")"
+          hdiutil attach "$image" -nobrowse -readonly -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir" >/dev/null 2>&1 || true' EXIT
+          installed_root="$RUNNER_TEMP/installed-app"
+          mkdir -p "$installed_root"
+          ditto "$mount_dir/TopoPPI.app" "$installed_root/TopoPPI.app"
+          hdiutil detach "$mount_dir"
+          trap - EXIT
+          codesign --verify --deep --strict "$installed_root/TopoPPI.app"
+
+          resources="$installed_root/TopoPPI.app/Contents/Resources"
+          for asset in \
+            environment.tar.gz \
+            OptCuts_bin \
+            TopoPPI-LICENSE.txt \
+            OptCuts-LICENSE.txt \
+            OptCuts-NOTICE.md \
+            OptCuts-THIRD-PARTY-LICENSES.txt \
+            THIRD_PARTY_NOTICES.txt \
+            THIRD_PARTY_LICENSES.json
+          do
+            test -s "$resources/$asset"
+          done
+          test -n "$(find "$resources/licenses" -type f -print -quit)"
+
+          runtime="$RUNNER_TEMP/packaged-runtime"
+          mkdir -p "$runtime/environment"
+          tar -xzf "$resources/environment.tar.gz" -C "$runtime/environment"
+          "$runtime/environment/bin/python" "$runtime/environment/bin/conda-unpack"
+          install -m 755 "$resources/OptCuts_bin" "$runtime/OptCuts_bin"
+          "$runtime/environment/bin/python" -c \
+            "import MDAnalysis, igl, prolif, rdkit, tkinter, topoppi; assert tkinter.Tcl().eval('info patchlevel'); assert topoppi.__version__ == '${{ steps.version.outputs.value }}'"
+          "$runtime/environment/bin/python" - <<'PY'
+          import tkinter as tk
+
+          from topoppi.gui_app import ProtSurfApp
+
+          root = tk.Tk()
+          root.withdraw()
+          try:
+              ProtSurfApp(root)
+              root.update_idletasks()
+          finally:
+              root.destroy()
+          PY
+          "$runtime/environment/bin/python" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          inventory = json.loads(
+              Path(
+                  os.environ["RUNNER_TEMP"],
+                  "installed-app",
+                  "TopoPPI.app",
+                  "Contents",
+                  "Resources",
+                  "THIRD_PARTY_LICENSES.json",
+              ).read_text()
+          )
+          assert inventory["packages"]
+          assert isinstance(inventory["unresolved"], list)
+          PY
+
+          output="$RUNNER_TEMP/topoppi-packaged-smoke.png"
+          "$runtime/environment/bin/python" -m topoppi.cli \
+            tests/fixtures/1bvk.pdb -A A -B B \
+            --prolif tests/fixtures/prolif_interactions.json \
+            --min-points 1 \
+            --optcuts-bin "$runtime/OptCuts_bin" \
+            -o "$output"
+          test -s "$output"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-${{ matrix.architecture }}
+          path: ${{ steps.image.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14

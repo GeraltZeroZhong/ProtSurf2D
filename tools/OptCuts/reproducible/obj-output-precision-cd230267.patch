@@ -1,0 +1,19 @@
+diff --git a/src/TriMesh.cpp b/src/TriMesh.cpp
+index 13bda33..883b74f 100755
+--- a/src/TriMesh.cpp
++++ b/src/TriMesh.cpp
+@@ -23,5 +23,6 @@
+ #include <cmath>
+ #include <fstream>
++#include <iomanip>
+ #include <limits>
+ 
+ extern std::ofstream logFile;
+@@ -1757,6 +1758,7 @@ namespace OptCuts {
+         std::ofstream out;
+         out.open(filePath);
+         assert(out.is_open());
++        out << std::setprecision(std::numeric_limits<double>::max_digits10);
+         
+         for(int vI = 0; vI < V.rows(); vI++) {
+             const Eigen::RowVector3d& v = V.row(vI);

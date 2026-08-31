@@ -1,0 +1,242 @@
+diff --git a/ext/libigl/include/igl/min_quad_with_fixed.cpp b/ext/libigl/include/igl/min_quad_with_fixed.cpp
+index ffb1322c769a52052a9ceeb35041fa6c9956ad51..dfe2489d09673bfed737dd902db465f5e10d0fd4 100755
+--- a/ext/libigl/include/igl/min_quad_with_fixed.cpp
++++ b/ext/libigl/include/igl/min_quad_with_fixed.cpp
+@@ -209,13 +209,16 @@ IGL_INLINE bool igl::min_quad_with_fixed_precompute(
+ #ifdef MIN_QUAD_WITH_FIXED_CPP_DEBUG
+     cout<<"    factorize"<<endl;
+ #endif
+-    if(data.Auu_pd && neq == 0)
++    if(Auu.rows() == 0 && neq == 0)
++    {
++      data.solver_type = min_quad_with_fixed_data<T>::EMPTY;
++    }else if(data.Auu_pd && neq == 0)
+     {
+ #ifdef MIN_QUAD_WITH_FIXED_CPP_DEBUG
+-    cout<<"    llt"<<endl;
++    cout<<"    lu"<<endl;
+ #endif
+-      data.llt.compute(Auu);
+-      switch(data.llt.info())
++      data.lu.compute(Auu);
++      switch(data.lu.info())
+       {
+         case Eigen::Success:
+           break;
+@@ -226,59 +229,38 @@ IGL_INLINE bool igl::min_quad_with_fixed_precompute(
+           cerr<<"Error: Other."<<endl;
+           return false;
+       }
+-      data.solver_type = min_quad_with_fixed_data<T>::LLT;
++      data.solver_type = min_quad_with_fixed_data<T>::LU;
+     }else
+     {
+ #ifdef MIN_QUAD_WITH_FIXED_CPP_DEBUG
+-    cout<<"    ldlt"<<endl;
++    cout<<"    lu"<<endl;
+ #endif
+       // Either not PD or there are equality constraints
+       SparseMatrix<T> NA;
+       slice(new_A,data.unknown_lagrange,data.unknown_lagrange,NA);
+       data.NA = NA;
+-      // Ideally we'd use LDLT but Eigen doesn't support positive semi-definite
+-      // matrices:
+-      // http://forum.kde.org/viewtopic.php?f=74&t=106962&p=291990#p291990
+-      if(data.Auu_sym && false)
+-      {
+-        data.ldlt.compute(NA);
+-        switch(data.ldlt.info())
+-        {
+-          case Eigen::Success:
+-            break;
+-          case Eigen::NumericalIssue:
+-            cerr<<"Error: Numerical issue."<<endl;
+-            return false;
+-          default:
+-            cerr<<"Error: Other."<<endl;
+-            return false;
+-        }
+-        data.solver_type = min_quad_with_fixed_data<T>::LDLT;
+-      }else
+-      {
+ #ifdef MIN_QUAD_WITH_FIXED_CPP_DEBUG
+     cout<<"    lu"<<endl;
+ #endif
+-        // Resort to LU
+-        // Bottleneck >1/2
+-        data.lu.compute(NA);
+-        //std::cout<<"NA=["<<std::endl<<NA<<std::endl<<"];"<<std::endl;
+-        switch(data.lu.info())
+-        {
+-          case Eigen::Success:
+-            break;
+-          case Eigen::NumericalIssue:
+-            cerr<<"Error: Numerical issue."<<endl;
+-            return false;
+-          case Eigen::InvalidInput:
+-            cerr<<"Error: Invalid Input."<<endl;
+-            return false;
+-          default:
+-            cerr<<"Error: Other."<<endl;
+-            return false;
+-        }
+-        data.solver_type = min_quad_with_fixed_data<T>::LU;
++      // Resort to LU
++      // Bottleneck >1/2
++      data.lu.compute(NA);
++      //std::cout<<"NA=["<<std::endl<<NA<<std::endl<<"];"<<std::endl;
++      switch(data.lu.info())
++      {
++        case Eigen::Success:
++          break;
++        case Eigen::NumericalIssue:
++          cerr<<"Error: Numerical issue."<<endl;
++          return false;
++        case Eigen::InvalidInput:
++          cerr<<"Error: Invalid Input."<<endl;
++          return false;
++        default:
++          cerr<<"Error: Other."<<endl;
++          return false;
+       }
++      data.solver_type = min_quad_with_fixed_data<T>::LU;
+     }
+   }else
+   {
+@@ -345,8 +327,8 @@ IGL_INLINE bool igl::min_quad_with_fixed_precompute(
+       cout<<"    factorize"<<endl;
+ #endif
+       // QRAuu should always be PD
+-      data.llt.compute(QRAuu);
+-      switch(data.llt.info())
++      data.lu.compute(QRAuu);
++      switch(data.lu.info())
+       {
+         case Eigen::Success:
+           break;
+@@ -357,7 +339,7 @@ IGL_INLINE bool igl::min_quad_with_fixed_precompute(
+           cerr<<"Error: Other."<<endl;
+           return false;
+       }
+-      data.solver_type = min_quad_with_fixed_data<T>::QR_LLT;
++      data.solver_type = min_quad_with_fixed_data<T>::QR_LU;
+     }
+ #ifdef MIN_QUAD_WITH_FIXED_CPP_DEBUG
+     cout<<"    smash"<<endl;
+@@ -451,11 +433,8 @@ IGL_INLINE bool igl::min_quad_with_fixed_solve(
+     //cout<<matlab_format(NB,"NB")<<endl;
+     switch(data.solver_type)
+     {
+-      case igl::min_quad_with_fixed_data<T>::LLT:
+-        sol = data.llt.solve(NB);
+-        break;
+-      case igl::min_quad_with_fixed_data<T>::LDLT:
+-        sol = data.ldlt.solve(NB);
++      case igl::min_quad_with_fixed_data<T>::EMPTY:
++        sol.resize(0,cols);
+         break;
+       case igl::min_quad_with_fixed_data<T>::LU:
+         // Not a bottleneck
+@@ -479,7 +458,7 @@ IGL_INLINE bool igl::min_quad_with_fixed_solve(
+     }
+   }else
+   {
+-    assert(data.solver_type == min_quad_with_fixed_data<T>::QR_LLT);
++    assert(data.solver_type == min_quad_with_fixed_data<T>::QR_LU);
+     MatrixXT eff_Beq;
+     // Adjust Aeq rhs to include known parts
+     eff_Beq =
+@@ -502,7 +481,7 @@ IGL_INLINE bool igl::min_quad_with_fixed_solve(
+     MatrixXT QRB;
+     QRB = -data.AeqTQ2T * (data.Auu * lambda_0) + data.AeqTQ2T * NB;
+     Derivedsol lambda;
+-    lambda = data.llt.solve(QRB);
++    lambda = data.lu.solve(QRB);
+     // prepare output
+     Derivedsol solu;
+     solu = data.AeqTQ2 * lambda + lambda_0;
+diff --git a/ext/libigl/include/igl/min_quad_with_fixed.h b/ext/libigl/include/igl/min_quad_with_fixed.h
+index 269623313e57b1c9c146afabff8e9030d5e9d3fe..0b100eb1a10ee103e60169bee8f0651ac4d31fbf 100755
+--- a/ext/libigl/include/igl/min_quad_with_fixed.h
++++ b/ext/libigl/include/igl/min_quad_with_fixed.h
+@@ -140,15 +140,12 @@ struct igl::min_quad_with_fixed_data
+   Eigen::SparseMatrix<T> preY;
+   enum SolverType
+   {
+-    LLT = 0,
+-    LDLT = 1,
+-    LU = 2,
+-    QR_LLT = 3,
+-    NUM_SOLVER_TYPES = 4
++    EMPTY = 0,
++    LU = 1,
++    QR_LU = 2,
++    NUM_SOLVER_TYPES = 3
+   } solver_type;
+   // Solvers
+-  Eigen::SimplicialLLT <Eigen::SparseMatrix<T > > llt;
+-  Eigen::SimplicialLDLT<Eigen::SparseMatrix<T > > ldlt;
+   Eigen::SparseLU<Eigen::SparseMatrix<T, Eigen::ColMajor>, Eigen::COLAMDOrdering<int> >   lu;
+   // QR factorization
+   // Are rows of Aeq linearly independent?
+diff --git a/src/LinSysSolver/EigenLibSolver.cpp b/src/LinSysSolver/EigenLibSolver.cpp
+index 58f27f43153d0c3972b8767b5cc35da5f8d580b2..af9a83d3c4532c2f71d8204163aa5761a86b255c 100755
+--- a/src/LinSysSolver/EigenLibSolver.cpp
++++ b/src/LinSysSolver/EigenLibSolver.cpp
+@@ -71,8 +71,9 @@ namespace OptCuts {
+     void EigenLibSolver<vectorTypeI, vectorTypeS>::analyze_pattern(void)
+     {
+         if(!useDense) {
+-            simplicialLDLT.analyzePattern(coefMtr);
+-            assert(simplicialLDLT.info() == Eigen::Success);
++            coefMtr_full = coefMtr.template selfadjointView<Eigen::Lower>();
++            sparseLU.analyzePattern(coefMtr_full);
++            assert(sparseLU.info() == Eigen::Success);
+         }
+     }
+     
+@@ -85,8 +86,9 @@ namespace OptCuts {
+             succeeded = (LDLT.info() == Eigen::Success);
+         }
+         else {
+-            simplicialLDLT.factorize(coefMtr);
+-            succeeded = (simplicialLDLT.info() == Eigen::Success);
++            coefMtr_full = coefMtr.template selfadjointView<Eigen::Lower>();
++            sparseLU.factorize(coefMtr_full);
++            succeeded = (sparseLU.info() == Eigen::Success);
+         }
+         assert(succeeded);
+         return succeeded;
+@@ -101,8 +103,8 @@ namespace OptCuts {
+             assert(LDLT.info() == Eigen::Success);
+         }
+         else {
+-            result = simplicialLDLT.solve(rhs);
+-            assert(simplicialLDLT.info() == Eigen::Success);
++            result = sparseLU.solve(rhs);
++            assert(sparseLU.info() == Eigen::Success);
+         }
+     }
+     
+diff --git a/src/LinSysSolver/EigenLibSolver.hpp b/src/LinSysSolver/EigenLibSolver.hpp
+index a4f9bcc4121d8b534a70218e55c16efe9df0bd99..bc9382115be4dffc63a80cb7ae90be72bde2c431 100755
+--- a/src/LinSysSolver/EigenLibSolver.hpp
++++ b/src/LinSysSolver/EigenLibSolver.hpp
+@@ -11,6 +11,7 @@
+ #include "LinSysSolver.hpp"
+ 
+ #include <Eigen/Eigen>
++#include <Eigen/SparseLU>
+ 
+ #include <vector>
+ #include <set>
+@@ -27,7 +28,8 @@ namespace OptCuts {
+         Eigen::MatrixXd coefMtr_dense;
+         Eigen::LDLT<Eigen::MatrixXd> LDLT;
+         Eigen::SparseMatrix<double> coefMtr;
+-        Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> simplicialLDLT;
++        Eigen::SparseMatrix<double> coefMtr_full;
++        Eigen::SparseLU<Eigen::SparseMatrix<double>> sparseLU;
+         
+     public:
+         void set_type(int threadAmt, int _mtype, bool is_upper_half = false);

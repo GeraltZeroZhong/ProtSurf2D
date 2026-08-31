@@ -1,4 +1,4 @@
-name: bio3d
+name: topoppi-dev
 channels:
   - conda-forge
   - defaults
@@ -16,7 +16,6 @@ dependencies:
   - pillow          
   - rtree      
   - shapely
-  - openbabel 
   - mdanalysis
   - rdkit
   - psutil

@@ -1,27 +1,45 @@
-# OptCuts Binary Notice
+# OptCuts build and license notice
 
-This directory contains a convenience Linux x86-64 build of `OptCuts_bin` for
-source checkout users who run the current TopoPPI pipeline.
+TopoPPI uses a pinned, residue-aware build of [OptCuts](https://github.com/liminchen/OptCuts) for topology editing and UV optimization. This directory includes the Linux x86-64 executable used by source checkouts. Release installers carry a native executable for their target platform.
 
-- Upstream project: https://github.com/liminchen/OptCuts
-- Upstream commit checked during release audit: `cd2302671af7954f263b0ea93d8419aa943d54be`
-- Binary format: ELF 64-bit LSB pie executable, x86-64, dynamically linked
-- Linux runtime sidecar: `libigl_stb_image.so` with `$ORIGIN` runtime lookup
-- GitHub release artifact name: `OptCuts_bin-linux-x86_64`
-- Linux runtime release artifact name: `libigl_stb_image-linux-x86_64.so`
-- Optional Windows release artifact name: `OptCuts_bin-windows-x86_64.exe`
-- Linux OptCuts SHA256: `0395b2b34f359b59a230e4833e320a55f81d12d90404f1c72b30c3eb8aef3e9f`
-- Linux runtime SHA256: `996a27b49b5b42b5c97554898ab3e943baa4c08969df89f7c4f6e54dabbbf65f`
-- Python package policy: `tools/OptCuts/OptCuts_bin` and
-  `tools/OptCuts/libigl_stb_image.so` are excluded from TopoPPI sdist and wheel
-  distributions.
+## Provenance
 
-Windows artifacts are not stored in this source checkout. The `Windows Installer`
-workflow builds `OptCuts_bin-windows-x86_64.exe` from the upstream OptCuts
-commit, embeds it in `TopoPPI-<version>-windows-x86_64-setup.exe`, and attaches
-both the standalone executable and `.sha256` sidecar to the same GitHub release.
+| Item | Value |
+| --- | --- |
+| Upstream commit | `cd2302671af7954f263b0ea93d8419aa943d54be` |
+| Linux format | ELF 64-bit PIE, x86-64, dynamically linked |
+| Linux compatibility baseline | glibc 2.17, GCC 12.4 toolchain |
+| Image helper | Statically linked vendored code |
+| Linux release artifact | `OptCuts_bin-linux-x86_64` |
+| Windows release artifact | `OptCuts_bin-windows-x86_64.exe` |
+| Linux SHA-256 | `d7990fc4f1ca46e0ba06b70801b64701dfdeb795f7efee6f7b9f197aa3b426eb` |
+| Python distribution policy | The executable is excluded from wheels and source distributions |
 
-The upstream repository ships `LICENSE.txt` with MIT License text but no
-copyright notice line. The local `LICENSE.txt` is copied from that upstream
-license file so the binary provenance is explicit for GitHub source archives
-and any separately published binary artifacts.
+The pinned source and patch set build both the complete residue-aware objective and its weight-zero geometry ablation. The integration provides:
+
+- residue-footprint fragmentation energy supplied through a versioned sidecar;
+- validated topology candidates and deterministic candidate-level TBB parallelism;
+- sparse local split and merge solves;
+- accelerated confirmed A-B-A-B topology cycles through OptCuts' critical-lambda query;
+- topology identity based on face-corner connectivity and cohesive-edge state; and
+- round-trip `double` precision for mesh coordinates.
+
+The release build defines `EIGEN_MPL2_ONLY`. OptCuts and libigl quadratic solves use Eigen SparseLU, which keeps Eigen's LGPL-gated sparse Cholesky implementation out of the executable. The build fails if an LGPL-gated Eigen header is included.
+
+The complete objective and geometry ablation share the same candidate policy. See the [residue-aware integration guide](./residue_aware/README.md) for the sidecar and state engine, and the [benchmark evidence schema](../../docs/benchmark_schema.md#residue-footprint-fragmentation) for reported measurements.
+
+## Platform artifacts
+
+The `Windows Installer` workflow builds the pinned source for Windows x86-64, embeds it in `TopoPPI-<version>-windows-x86_64-setup.exe`, and publishes the standalone executable with its `.sha256` file.
+
+The `macOS App` workflow builds the same source natively for Apple Silicon and Intel. Each architecture-matched disk image contains its OptCuts executable.
+
+## License
+
+Upstream OptCuts includes MIT License text without a copyright notice line. [`LICENSE.txt`](./LICENSE.txt) is copied from that upstream file and accompanies the build provenance in source archives and separately published binaries.
+
+The executable also contains statically linked code from TBB, libigl, Eigen, GLFW, Triangle, stb, glad, and the Khronos platform header. Their full notices are in [`THIRD_PARTY_LICENSES.txt`](./THIRD_PARTY_LICENSES.txt) and accompany every standalone executable and installer.
+
+Triangle 1.6 permits redistribution when no compensation is received. Commercial-system distribution requires direct arrangement with its author. This condition applies to the bundled OptCuts executable.
+
+The corresponding source is available from the pinned [OptCuts commit](https://github.com/liminchen/OptCuts/tree/cd2302671af7954f263b0ea93d8419aa943d54be), its vendored libigl and Eigen trees, the pinned [TBB commit](https://github.com/wjakob/tbb/tree/344fa84f34089681732a54f5def93a30a3056ab9), and the patches in this directory.

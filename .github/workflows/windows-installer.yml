@@ -1,22 +1,20 @@
 name: Windows Installer
 
 on:
+  workflow_call:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: windows-2022
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
 
@@ -38,7 +36,7 @@ jobs:
       - name: Build Windows OptCuts artifact
         shell: pwsh
         run: |
-          .\tools\OptCuts\build_windows_optcuts.ps1 -OutputDir "installer\windows" -SkipSmoke
+          .\tools\OptCuts\build_windows_optcuts.ps1 -OutputDir "installer\windows"
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           Copy-Item installer\windows\OptCuts_bin-windows-x86_64.exe release-assets\
           Copy-Item installer\windows\OptCuts_bin-windows-x86_64.exe.sha256 release-assets\
@@ -67,7 +65,7 @@ jobs:
             Pop-Location
           }
 
-      - name: Hash setup executable
+      - name: Locate setup executable
         id: artifact
         shell: pwsh
         run: |
@@ -75,27 +73,135 @@ jobs:
           if (!(Test-Path $installer)) {
             throw "Installer not found: $installer"
           }
-          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
-          "$hash  $(Split-Path $installer -Leaf)" | Set-Content "$installer.sha256" -Encoding ascii
+          Copy-Item $installer release-assets\
+          $expected = @(
+            "OptCuts_bin-windows-x86_64.exe",
+            "OptCuts_bin-windows-x86_64.exe.sha256",
+            "TopoPPI-${{ steps.version.outputs.value }}-windows-x86_64-setup.exe"
+          ) | Sort-Object
+          $actual = @(Get-ChildItem release-assets -File | ForEach-Object Name | Sort-Object)
+          if (Compare-Object -ReferenceObject $expected -DifferenceObject $actual) {
+            throw "Unexpected Windows release artifact layout: $($actual -join ', ')"
+          }
           "installer=$installer" >> $env:GITHUB_OUTPUT
-          "checksum=$installer.sha256" >> $env:GITHUB_OUTPUT
+
+      - name: Run installed application lifecycle smoke
+        timeout-minutes: 40
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path "${{ steps.artifact.outputs.installer }}").Path
+          $installDir = Join-Path $env:RUNNER_TEMP "TopoPPI Installed"
+          $installLog = Join-Path $env:RUNNER_TEMP "TopoPPI Installer.log"
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          Set-Content -Path (Join-Path $installDir "TopoPPI GUI.cmd") -Value "legacy launcher"
+          $installProcess = Start-Process -FilePath $installer -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$installDir`"", "/LOG=`"$installLog`""
+          ) -PassThru
+          $installProcess | Wait-Process -Timeout 1800 -ErrorAction Stop
+          if ($installProcess.ExitCode -ne 0) {
+            Get-Content $installLog -Tail 200 -ErrorAction SilentlyContinue
+            throw "TopoPPI setup failed with exit code $($installProcess.ExitCode)."
+          }
+
+          $python = Join-Path $installDir "env\python.exe"
+          $cli = Join-Path $installDir "TopoPPI CLI.cmd"
+          $commandPrompt = Join-Path $installDir "TopoPPI Command Prompt.cmd"
+          $guiLauncher = Join-Path $installDir "launch_gui.pyw"
+          $commandPromptShortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\TopoPPI\TopoPPI Command Prompt.lnk"
+          foreach ($path in @($python, $cli, $commandPrompt, $guiLauncher, $commandPromptShortcut)) {
+            if (!(Test-Path $path)) {
+              throw "Installed application file is missing: $path"
+            }
+          }
+          if (Test-Path (Join-Path $installDir "TopoPPI GUI.cmd")) {
+            throw "The v1.2 GUI launcher remained after upgrade."
+          }
+
+          & $python -c "import MDAnalysis, igl, prolif, rdkit, topoppi; assert topoppi.__version__ == '${{ steps.version.outputs.value }}'"
+          if ($LASTEXITCODE -ne 0) {
+            throw "The installed Python environment could not import the application stack."
+          }
+
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "The automation CLI wrapper could not start TopoPPI."
+          }
+
+          $commandPromptText = Get-Content $commandPrompt -Raw
+          foreach ($expected in @("TOPOPPI_OPTCUTS_BIN", "env\Scripts", "cmd.exe /K")) {
+            if (!$commandPromptText.Contains($expected)) {
+              throw "The command prompt launcher does not configure $expected."
+            }
+          }
+
+          $guiSmoke = @'
+          import tkinter as tk
+          from topoppi.gui_app import ProtSurfApp
+
+          root = tk.Tk()
+          root.withdraw()
+          try:
+              ProtSurfApp(root)
+              root.update_idletasks()
+          finally:
+              root.destroy()
+          '@
+          & $python -c $guiSmoke
+          if ($LASTEXITCODE -ne 0) {
+            throw "The installed desktop application could not construct its main window."
+          }
+
+          $env:MPLBACKEND = "Agg"
+          $smokeOutput = Join-Path $env:RUNNER_TEMP "topoppi-windows-smoke.png"
+          & $cli tests\fixtures\tiny_complex.pdb -A A -B B `
+            --prolif tests\fixtures\prolif_interactions.json `
+            --min-points 1 `
+            -o $smokeOutput
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path $smokeOutput)) {
+            throw "The installed TopoPPI pipeline smoke failed."
+          }
+
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (!(Test-Path $uninstaller)) {
+            throw "TopoPPI uninstaller was not created."
+          }
+          Set-Content -Path (Join-Path $installDir "gui-startup.log") -Value "lifecycle smoke"
+          $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          ) -Wait -PassThru
+          if ($uninstallProcess.ExitCode -ne 0) {
+            throw "TopoPPI uninstall failed with exit code $($uninstallProcess.ExitCode)."
+          }
+          if (Test-Path $installDir) {
+            $remaining = @(Get-ChildItem -Force $installDir | ForEach-Object Name)
+            throw "TopoPPI install directory remained after uninstall: $($remaining -join ', ')"
+          }
+          if (Test-Path $commandPromptShortcut) {
+            throw "The TopoPPI command prompt shortcut remained after uninstall."
+          }
+
+      - name: Reject private paths in release executables
+        shell: pwsh
+        run: |
+          $paths = @(
+            (Resolve-Path "${{ steps.artifact.outputs.installer }}").Path,
+            (Resolve-Path "release-assets\OptCuts_bin-windows-x86_64.exe").Path
+          )
+          foreach ($path in $paths) {
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            $text = [System.Text.Encoding]::ASCII.GetString($bytes) +
+              [System.Text.Encoding]::Unicode.GetString($bytes)
+            foreach ($marker in @($env:GITHUB_WORKSPACE, "D:\a\", "\Users\runner\")) {
+              if ($text.IndexOf($marker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                throw "Release executable contains a private build path: $path"
+              }
+            }
+          }
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: TopoPPI-${{ steps.version.outputs.value }}-windows-x86_64-setup
-          path: |
-            ${{ steps.artifact.outputs.installer }}
-            ${{ steps.artifact.outputs.checksum }}
-            release-assets/OptCuts_bin-windows-x86_64.exe
-            release-assets/OptCuts_bin-windows-x86_64.exe.sha256
-
-      - name: Attach setup executable to GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ${{ steps.artifact.outputs.installer }}
-            ${{ steps.artifact.outputs.checksum }}
-            release-assets/OptCuts_bin-windows-x86_64.exe
-            release-assets/OptCuts_bin-windows-x86_64.exe.sha256
+          name: release-windows
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14

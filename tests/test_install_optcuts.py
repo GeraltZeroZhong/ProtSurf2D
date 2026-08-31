@@ -1,37 +1,51 @@
 import hashlib
+import io
 import stat
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from topoppi import __version__
 from topoppi.install_optcuts import (
     ARTIFACT_NAME,
     PLATFORM_ARTIFACTS,
-    SidecarArtifact,
+    build_parser,
     default_install_dir,
     default_url,
     install_optcuts,
+    main,
     platform_artifact,
     resolve_expected_checksum,
 )
 
 
 class InstallOptCutsTests(unittest.TestCase):
+    def test_help_does_not_show_none_as_a_user_default(self):
+        self.assertNotIn("default: None", build_parser().format_help())
+
+    def test_version_flag_reports_the_installed_package(self):
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaisesRegex(SystemExit, "0"):
+            main(["--version"])
+        self.assertEqual(output.getvalue().strip(), f"topoppi-install-optcuts {__version__}")
+
     def test_default_url_uses_release_tag_and_artifact_name(self):
         self.assertEqual(
-            default_url("1.2"),
-            f"https://github.com/GeraltZeroZhong/TopoPPI/releases/download/v1.2/{ARTIFACT_NAME}",
+            default_url(__version__),
+            f"https://github.com/GeraltZeroZhong/TopoPPI/releases/download/v{__version__}/{ARTIFACT_NAME}",
         )
         self.assertEqual(
-            default_url("v1.2"),
-            f"https://github.com/GeraltZeroZhong/TopoPPI/releases/download/v1.2/{ARTIFACT_NAME}",
+            default_url(f"v{__version__}"),
+            f"https://github.com/GeraltZeroZhong/TopoPPI/releases/download/v{__version__}/{ARTIFACT_NAME}",
         )
 
     def test_default_url_can_target_windows_artifact(self):
         self.assertEqual(
-            default_url("1.2", "windows-x86_64"),
-            "https://github.com/GeraltZeroZhong/TopoPPI/releases/download/v1.2/OptCuts_bin-windows-x86_64.exe",
+            default_url(__version__, "windows-x86_64"),
+            f"https://github.com/GeraltZeroZhong/TopoPPI/releases/download/v{__version__}/"
+            "OptCuts_bin-windows-x86_64.exe",
         )
 
     def test_auto_platform_accepts_windows_amd64(self):
@@ -54,7 +68,6 @@ class InstallOptCutsTests(unittest.TestCase):
                 url=source.as_uri(),
                 checksum=checksum,
                 install_dir=install_dir,
-                skip_platform_check=True,
             )
 
             self.assertEqual(target, install_dir / "OptCuts_bin")
@@ -76,39 +89,11 @@ class InstallOptCutsTests(unittest.TestCase):
                 checksum=checksum,
                 install_dir=install_dir,
                 platform_key=artifact.platform_key,
-                skip_platform_check=True,
             )
 
             self.assertEqual(target, install_dir / "OptCuts_bin.exe")
             self.assertEqual(target.read_bytes(), payload)
             self.assertTrue(target.stat().st_mode & stat.S_IXUSR)
-
-    def test_installs_sidecar_artifact_next_to_binary(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            source = tmp_path / ARTIFACT_NAME
-            payload = b"fake optcuts binary"
-            source.write_bytes(payload)
-            checksum = hashlib.sha256(payload).hexdigest()
-
-            sidecar = SidecarArtifact("libigl_stb_image-linux-x86_64.so", "libigl_stb_image.so")
-            sidecar_source = tmp_path / sidecar.artifact_name
-            sidecar_payload = b"fake sidecar library"
-            sidecar_source.write_bytes(sidecar_payload)
-            sidecar_checksum = hashlib.sha256(sidecar_payload).hexdigest()
-
-            install_dir = tmp_path / "bin"
-            target = install_optcuts(
-                url=source.as_uri(),
-                checksum=checksum,
-                install_dir=install_dir,
-                sidecars=((sidecar, sidecar_source.as_uri(), sidecar_checksum),),
-                skip_platform_check=True,
-            )
-
-            self.assertEqual(target, install_dir / "OptCuts_bin")
-            self.assertEqual((install_dir / "libigl_stb_image.so").read_bytes(), sidecar_payload)
-            self.assertTrue((install_dir / "libigl_stb_image.so").stat().st_mode & stat.S_IXUSR)
 
     def test_reads_checksum_from_release_sidecar(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,10 +134,33 @@ class InstallOptCutsTests(unittest.TestCase):
                     url=source.as_uri(),
                     checksum=checksum,
                     install_dir=install_dir,
-                    skip_platform_check=True,
                 )
 
             self.assertEqual(target.read_text(encoding="utf-8"), "existing")
+
+    def test_force_replaces_an_existing_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / ARTIFACT_NAME
+            payload = b"updated optcuts binary"
+            source.write_bytes(payload)
+            checksum = hashlib.sha256(payload).hexdigest()
+
+            install_dir = tmp_path / "bin"
+            install_dir.mkdir()
+            target = install_dir / "OptCuts_bin"
+            target.write_bytes(b"old binary")
+
+            installed = install_optcuts(
+                url=source.as_uri(),
+                checksum=checksum,
+                install_dir=install_dir,
+                force=True,
+            )
+
+            self.assertEqual(installed, target)
+            self.assertEqual(target.read_bytes(), payload)
+            self.assertTrue(target.stat().st_mode & stat.S_IXUSR)
 
 
 if __name__ == "__main__":

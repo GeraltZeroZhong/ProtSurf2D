@@ -3,7 +3,11 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_bin="${script_dir}/OptCuts_bin"
-source_lib="${script_dir}/libigl_stb_image.so"
+
+if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+  echo "ERROR: The source-tree OptCuts executable supports Linux x86-64 only. Build the native executable for this platform and set TOPOPPI_OPTCUTS_BIN." >&2
+  exit 1
+fi
 
 if [[ -z "${CONDA_PREFIX:-}" ]]; then
   echo "ERROR: CONDA_PREFIX is not set. Activate the target Conda environment first." >&2
@@ -20,9 +24,6 @@ mkdir -p "${install_dir}"
 
 echo "Installing OptCuts into ${install_dir}..."
 install -m 755 "${source_bin}" "${install_dir}/OptCuts_bin"
-if [[ -f "${source_lib}" ]]; then
-  install -m 755 "${source_lib}" "${install_dir}/libigl_stb_image.so"
-fi
 
 echo "Installation complete!"
 echo "You can now run OptCuts_bin directly in your Conda environment."

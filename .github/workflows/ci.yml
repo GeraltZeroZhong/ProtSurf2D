@@ -2,7 +2,20 @@ name: CI
 
 on:
   push:
+    branches:
+      - "**"
   pull_request:
+  workflow_call:
+    inputs:
+      release_artifacts:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      release_artifacts:
+        description: Build and upload the Linux release files
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -11,17 +24,17 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml
-          environment-name: bio3d
+          environment-name: topoppi-dev
           cache-environment: true
 
       - name: Install package
         shell: bash -el {0}
-        run: pip install -e ".[dev,benchmark,interactions,meshio]"
+        run: pip install -e ".[dev,benchmark,meshio]"
 
       - name: Run tests
         shell: bash -el {0}
@@ -43,8 +56,9 @@ jobs:
         env:
           MPLBACKEND: Agg
         run: |
-          python -m topoppi.cli tests/fixtures/1bvk.pdb -A A -B C \
+          python -m topoppi.cli tests/fixtures/1bvk.pdb -A A -B B \
             --prolif tests/fixtures/prolif_interactions.json \
+            --min-points 1 \
             --optcuts-bin tools/OptCuts/OptCuts_bin \
             -o /tmp/topoppi-ci-interface.png
           test -s /tmp/topoppi-ci-interface.png
@@ -55,7 +69,130 @@ jobs:
           rm -rf dist build src/*.egg-info
           python -m build
           python -m twine check dist/*
-          if tar -tzf dist/*.tar.gz | grep -E 'tools/OptCuts/(OptCuts_bin|libigl_stb_image)|tests/fixtures/.*(_cutoff|\.topoppi\.json)'; then
-            echo "Generated fixture output or OptCuts binary leaked into sdist." >&2
-            exit 1
-          fi
+          python - <<'PY'
+          import pathlib
+          import os
+          import re
+          import tarfile
+          import zipfile
+
+          archives = sorted(pathlib.Path("dist").iterdir())
+          if len(archives) != 2:
+              raise SystemExit(f"Expected one wheel and one sdist, found: {archives}")
+          blocked_name = re.compile(
+              r"(^|/)(\.internal|docs/(release_checklist|reproducibility)\.md|"
+              r"benchmark_(report|summary|checkpoint|manifest|failures|per_patch|per_face_sample|"
+              r"per_residue|provenance|optcuts_executions|artifact_checksums)|"
+              r"sensitivity_(plan|preflight|results|summary)|worker_logs)(/|\.|$)|"
+              r"tools/OptCuts/(OptCuts[^/]*(_bin|\.exe)|[^/]*\.so)|"
+              r"tests/fixtures/.*(_cutoff|\.topoppi\.json)"
+          )
+          blocked_content = (
+              os.environ["GITHUB_WORKSPACE"].encode(),
+              b"github_pat_",
+              b"pypi-AgEI",
+              b"-----BEGIN PRIVATE KEY-----",
+          )
+          private_path = re.compile(
+              rb"(?:/home/[^/\x00]+/|/Users/[^/\x00]+/|"
+              rb"[A-Za-z]:\\Users\\[^\\\x00]+\\|"
+              rb"\\\\wsl\.localhost\\[^\\\x00]+\\home\\[^\\\x00]+\\)"
+          )
+
+          for archive in archives:
+              if archive.suffix == ".whl":
+                  with zipfile.ZipFile(archive) as handle:
+                      members = [(name, handle.read(name)) for name in handle.namelist() if not name.endswith("/")]
+              else:
+                  with tarfile.open(archive, "r:gz") as handle:
+                      members = []
+                      for member in handle.getmembers():
+                          if member.isfile():
+                              extracted = handle.extractfile(member)
+                              members.append((member.name, extracted.read() if extracted else b""))
+              for name, content in members:
+                  normalized = name.split("/", 1)[-1] if archive.suffix != ".whl" else name
+                  if blocked_name.search(normalized):
+                      raise SystemExit(f"Generated or internal file leaked into {archive.name}: {name}")
+                  if any(marker in content for marker in blocked_content):
+                      raise SystemExit(f"Private path or credential marker leaked into {archive.name}: {name}")
+                  if private_path.search(content):
+                      raise SystemExit(f"Private user path leaked into {archive.name}: {name}")
+          PY
+          source_tree="$(mktemp -d)"
+          tar -xzf dist/*.tar.gz -C "$source_tree" --strip-components=1
+          (
+            cd "$source_tree"
+            PYTHONPATH=src python -m pytest
+          )
+
+      - name: Audit Linux OptCuts release binary
+        if: inputs.release_artifacts == true
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re
+          import subprocess
+
+          binary = "tools/OptCuts/OptCuts_bin"
+          dynamic = subprocess.check_output(["readelf", "-d", binary], text=True)
+          if "RPATH" in dynamic or "RUNPATH" in dynamic:
+              raise SystemExit("OptCuts contains an embedded runtime search path")
+          for library in ("libstdc++.so.6", "libgcc_s.so.1"):
+              if library in dynamic:
+                  raise SystemExit(f"OptCuts should statically link {library}")
+
+          versions = subprocess.check_output(["readelf", "--version-info", binary], text=True)
+          glibc_versions = [
+              tuple(map(int, match))
+              for match in re.findall(r"GLIBC_(\d+)\.(\d+)", versions)
+          ]
+          if not glibc_versions or max(glibc_versions) > (2, 17):
+              raise SystemExit(f"OptCuts exceeds the glibc 2.17 baseline: {max(glibc_versions)}")
+          if "GLIBCXX_" in versions or "CXXABI_" in versions:
+              raise SystemExit("OptCuts retains a dynamic C++ runtime version requirement")
+
+          metadata = subprocess.check_output(["strings", "-a", binary], text=True)
+          for marker in (
+              "microsoft-standard",
+              "/home/runner/",
+              "/Users/runner/",
+              "runner/work/",
+              "/tmp/topoppi",
+          ):
+              if marker.lower() in metadata.lower():
+                  raise SystemExit(f"OptCuts contains runner-specific metadata: {marker}")
+          if re.search(r"TBB: BUILD_OS\s+.*\d", metadata):
+              raise SystemExit("OptCuts contains a versioned TBB BUILD_OS value")
+          for expected in (
+              "TBB: BUILD_HOST         release-builder",
+              "TBB: BUILD_OS           Linux",
+              "TBB: BUILD_KERNEL       generic",
+              "TBB: BUILD_COMPILER     C++",
+          ):
+              if expected not in metadata:
+                  raise SystemExit(f"OptCuts is missing neutral TBB metadata: {expected}")
+          PY
+
+      - name: Prepare Linux release artifact
+        if: inputs.release_artifacts == true
+        shell: bash -el {0}
+        run: |
+          set -euo pipefail
+          version="$(python -c 'import topoppi; print(topoppi.__version__)')"
+          mkdir release-assets
+          install -m 644 "dist/topoppi-${version}-py3-none-any.whl" release-assets/
+          install -m 644 "dist/topoppi-${version}.tar.gz" release-assets/
+          install -m 755 tools/OptCuts/OptCuts_bin release-assets/OptCuts_bin-linux-x86_64
+          install -m 644 LICENSE release-assets/TopoPPI-LICENSE.txt
+          install -m 644 tools/OptCuts/LICENSE.txt release-assets/OptCuts-LICENSE.txt
+          install -m 644 tools/OptCuts/NOTICE.md release-assets/OptCuts-NOTICE.md
+          install -m 644 tools/OptCuts/THIRD_PARTY_LICENSES.txt release-assets/OptCuts-THIRD-PARTY-LICENSES.txt
+
+      - uses: actions/upload-artifact@v7
+        if: inputs.release_artifacts == true
+        with:
+          name: release-linux
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 14

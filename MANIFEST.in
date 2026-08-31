@@ -5,13 +5,25 @@ include CHANGELOG.md
 include CITATION.cff
 include CONTRIBUTING.md
 recursive-include docs *.md
-recursive-include docs/assets *.png
+exclude docs/release_checklist.md
+exclude docs/reproducibility.md
+include docs/benchmark_config.example.json
+include docs/benchmark_quickstart.example.json
+include docs/benchmark_manifest_template.csv
+include docs/sensitivity_axes.example.json
+include docs/assets/topoppi-gui-sanitized.png
 recursive-include src/topoppi/assets *.ico *.png
-recursive-include installer/windows *.iss *.ps1 *.md
+recursive-include installer/windows *.iss *.ps1 *.pyw *.md
+recursive-include installer/macos *.sh *.py *.md *.in *.c TopoPPI
 include tools/OptCuts/NOTICE.md
 include tools/OptCuts/LICENSE.txt
+include tools/OptCuts/THIRD_PARTY_LICENSES.txt
 include tools/OptCuts/install_optcuts.sh
+include tools/OptCuts/build_residue_aware_optcuts.sh
 include tools/OptCuts/build_windows_optcuts.ps1
+recursive-include tools/OptCuts/residue_aware *.cpp *.hpp *.md *.patch
+recursive-include tools/OptCuts/reproducible *.patch
+recursive-include tools/publication *.py *.md
 include tests/fixtures/1bvk.pdb
 include tests/fixtures/prolif_interactions.json
 include tests/fixtures/tiny_complex.pdb
@@ -19,10 +31,11 @@ recursive-exclude .github *
 recursive-exclude dist *
 recursive-exclude build *
 recursive-exclude *.egg-info *
-recursive-exclude tools/OptCuts OptCuts_bin*
-recursive-exclude tools/OptCuts libigl_stb_image*
+recursive-exclude tools/OptCuts OptCuts*_bin*
+recursive-exclude tools/OptCuts *.so *.exe
 recursive-exclude tests/fixtures *_cutoff*_res*_sigma*_min*_*.png
 recursive-exclude tests/fixtures *_cutoff*_res*_sigma*_min*_*.topoppi.json
+prune .internal
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude .DS_Store

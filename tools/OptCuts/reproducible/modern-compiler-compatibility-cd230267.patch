@@ -1,0 +1,13 @@
+diff --git a/ext/libigl/external/eigen/Eigen/src/Core/Transpositions.h b/ext/libigl/external/eigen/Eigen/src/Core/Transpositions.h
+index 19c17bb..86da5af 100755
+--- a/ext/libigl/external/eigen/Eigen/src/Core/Transpositions.h
++++ b/ext/libigl/external/eigen/Eigen/src/Core/Transpositions.h
+@@ -384,7 +384,7 @@ class Transpose<TranspositionsBase<TranspositionsDerived> >
+     const Product<OtherDerived, Transpose, AliasFreeProduct>
+     operator*(const MatrixBase<OtherDerived>& matrix, const Transpose& trt)
+     {
+-      return Product<OtherDerived, Transpose, AliasFreeProduct>(matrix.derived(), trt.derived());
++      return Product<OtherDerived, Transpose, AliasFreeProduct>(matrix.derived(), trt);
+     }
+ 
+     /** \returns the \a matrix with the inverse transpositions applied to the rows.
