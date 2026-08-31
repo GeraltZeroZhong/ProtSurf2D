@@ -168,8 +168,7 @@ jobs:
           Set-Content -Path (Join-Path $installDir "gui-startup.log") -Value "lifecycle smoke"
           $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList @(
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
-          ) -PassThru
-          $uninstallProcess | Wait-Process -Timeout 600 -ErrorAction Stop
+          ) -Wait -PassThru
           if ($uninstallProcess.ExitCode -ne 0) {
             throw "TopoPPI uninstall failed with exit code $($uninstallProcess.ExitCode)."
           }
