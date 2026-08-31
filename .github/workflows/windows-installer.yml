@@ -173,7 +173,8 @@ jobs:
             throw "TopoPPI uninstall failed with exit code $($uninstallProcess.ExitCode)."
           }
           if (Test-Path $installDir) {
-            throw "TopoPPI install directory remained after uninstall."
+            $remaining = @(Get-ChildItem -Force $installDir | ForEach-Object Name)
+            throw "TopoPPI install directory remained after uninstall: $($remaining -join ', ')"
           }
           if (Test-Path $commandPromptShortcut) {
             throw "The TopoPPI command prompt shortcut remained after uninstall."

@@ -51,6 +51,9 @@ Type: files; Name: "{group}\TopoPPI CLI.lnk"
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\uninstall_topoppi.ps1"" -InstallDir ""{app}"""; Flags: waituntilterminated runhidden
 
+[UninstallDelete]
+Type: dirifempty; Name: "{app}"
+
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
 var

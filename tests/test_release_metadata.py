@@ -69,6 +69,7 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("TopoPPI CLI.cmd", uninstaller)
         self.assertIn("TopoPPI Command Prompt.cmd", uninstaller)
         self.assertIn("gui-startup.log", uninstaller)
+        self.assertIn('Type: dirifempty; Name: "{app}"', installer)
         self.assertIn("TopoPPI-LICENSE.txt", installer)
         self.assertIn("OptCuts-LICENSE.txt", installer)
         self.assertIn("OptCuts-NOTICE.md", installer)
