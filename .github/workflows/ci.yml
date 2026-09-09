@@ -40,8 +40,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth
 
       - name: Run tests
+        timeout-minutes: 5
         shell: bash -el {0}
-        run: xvfb-run -a python -m pytest
+        run: xvfb-run -a python -m pytest -v -o faulthandler_timeout=60
 
       - name: Lint
         shell: bash -el {0}
@@ -71,6 +72,7 @@ jobs:
           xvfb-run -a python installer/smoke_footprints.py /tmp/topoppi-ci-interface.npz /tmp/topoppi-ci-desktop
 
       - name: Build package
+        timeout-minutes: 5
         shell: bash -el {0}
         run: |
           rm -rf dist build src/*.egg-info
@@ -130,7 +132,7 @@ jobs:
           tar -xzf dist/*.tar.gz -C "$source_tree" --strip-components=1
           (
             cd "$source_tree"
-            PYTHONPATH=src xvfb-run -a python -m pytest
+            PYTHONPATH=src xvfb-run -a python -m pytest -v -o faulthandler_timeout=60
           )
 
       - name: Audit Linux OptCuts release binary
