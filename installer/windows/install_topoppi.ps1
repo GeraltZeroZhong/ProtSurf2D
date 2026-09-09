@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$TranscriptStarted = $false
 
 function Write-Step {
     param([string]$Message)
@@ -38,6 +39,8 @@ try {
     $BundledOptCuts = Join-Path $InstallDir "installer\assets\OptCuts_bin-windows-x86_64.exe"
 
     New-Item -ItemType Directory -Force -Path $InstallDir, $BinDir | Out-Null
+    Start-Transcript -Path (Join-Path $InstallDir "installation.log") -Force | Out-Null
+    $TranscriptStarted = $true
 
     if (!(Test-Path $Micromamba)) {
         Write-Step "Downloading micromamba"
@@ -140,7 +143,12 @@ cmd.exe /K
     Write-Step "TopoPPI installation finished"
 }
 catch {
-    Write-Error "TopoPPI installation failed: $($_.Exception.Message)"
-    Write-Error "If this failed while installing OptCuts, confirm the GitHub release includes OptCuts_bin-windows-x86_64.exe and its .sha256 sidecar."
+    Write-Error "TopoPPI installation failed: $($_.Exception.Message)" -ErrorAction Continue
+    Write-Host "Installation details: $(Join-Path $InstallDir 'installation.log')"
     exit 1
+}
+finally {
+    if ($TranscriptStarted) {
+        Stop-Transcript | Out-Null
+    }
 }

@@ -55,7 +55,8 @@ error for the repair report.
 
 If setup stops:
 
-1. Read the final PowerShell message for the failed download or package step.
+1. Read the final PowerShell message or `installation.log` in the installation
+   folder for the failed download or package step.
 2. Restore the network connection and run the installer again.
 3. If the environment remains incomplete, uninstall TopoPPI, remove
    `%LOCALAPPDATA%\TopoPPI`, and start a fresh installation.

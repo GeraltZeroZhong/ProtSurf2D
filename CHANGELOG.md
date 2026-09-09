@@ -10,6 +10,7 @@ All notable changes to TopoPPI are documented here.
 - Added GUI region recoloring and label dragging, with numerical annotation colors kept consistent with their value scale.
 - Added explicit geometric interaction selection for runs using distance-defined optimization weights.
 - Updated the Windows launchers to resolve their environment from the installation directory, including paths with spaces and Unicode characters. Same-version setup reinstalls the application package for repair.
+- Added a persistent Windows installation log and propagated environment setup errors to the installer's exit status.
 - Enabled the existing Tk interaction tests in Linux CI and added installed-runtime footprint editing and atlas rendering to platform smoke runs.
 - Preserved completed computation when a display setting needs correction, allowing style recovery and atlas export without repeating optimization.
 - Preserved residue highlights, manual colors and label positions after failed or cancelled runs, and waited for active tasks to finish cleanup when closing the desktop app.

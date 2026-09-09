@@ -100,6 +100,7 @@ jobs:
           $installProcess | Wait-Process -Timeout 1800 -ErrorAction Stop
           if ($installProcess.ExitCode -ne 0) {
             Get-Content $installLog -Tail 200 -ErrorAction SilentlyContinue
+            Get-Content (Join-Path $installDir "installation.log") -Tail 200 -ErrorAction SilentlyContinue
             throw "TopoPPI setup failed with exit code $($installProcess.ExitCode)."
           }
 
@@ -110,6 +111,8 @@ jobs:
           $commandPromptShortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\TopoPPI\TopoPPI Command Prompt.lnk"
           foreach ($path in @($python, $cli, $commandPrompt, $guiLauncher, $commandPromptShortcut)) {
             if (!(Test-Path $path)) {
+              Get-Content $installLog -Tail 200 -ErrorAction SilentlyContinue
+              Get-Content (Join-Path $installDir "installation.log") -Tail 200 -ErrorAction SilentlyContinue
               throw "Installed application file is missing: $path"
             }
           }
@@ -193,6 +196,17 @@ jobs:
           if (Test-Path $commandPromptShortcut) {
             throw "The TopoPPI command prompt shortcut remained after uninstall."
           }
+
+      - name: Upload installation failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installation-logs
+          path: |
+            ${{ runner.temp }}/TopoPPI Installer.log
+            ${{ runner.temp }}/TopoPPI 用户/installation.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Reject private paths in release executables
         shell: pwsh
