@@ -211,9 +211,40 @@ class VisualizationConfig:
     mesh_fill_alpha: float = 0.20
     mesh_line_alpha: float = 0.60
     label_offset: float = 0.04
+    map_style: str = "markers"
+    highlight_residues: tuple[str, ...] = ()
+    annotation_file: str = ""
+    annotation_label: str = "Value"
+    value_min: Optional[float] = None
+    value_max: Optional[float] = None
+    footprint_labels: str = "all"
+    show_seams: bool = True
+    show_residue_borders: bool = True
+    footprint_color: str = "#DCE8EF"
+    highlight_color: str = "#A64D79"
+    missing_color: str = "#D9D9D9"
 
     def validate(self) -> None:
         _require_positive_integer("visualization.min_points", self.min_points)
+        if self.map_style not in {"markers", "footprints"}:
+            raise ConfigurationError("visualization.map_style must be 'markers' or 'footprints'.")
+        if self.footprint_labels not in {"all", "highlighted", "none"}:
+            raise ConfigurationError("visualization.footprint_labels must be 'all', 'highlighted', or 'none'.")
+        for name in ("show_seams", "show_residue_borders"):
+            _require_boolean(f"visualization.{name}", getattr(self, name))
+        for name in ("value_min", "value_max"):
+            if getattr(self, name) is not None:
+                _require_finite_number(f"visualization.{name}", getattr(self, name))
+        if self.value_min is not None and self.value_max is not None and self.value_min >= self.value_max:
+            raise ConfigurationError("visualization.value_min must be smaller than value_max.")
+        if isinstance(self.highlight_residues, str):
+            raise ConfigurationError("visualization.highlight_residues must be a sequence of residue keys.")
+        if self.map_style == "footprints":
+            from matplotlib.colors import is_color_like
+
+            for name in ("footprint_color", "highlight_color", "missing_color"):
+                if not is_color_like(getattr(self, name)):
+                    raise ConfigurationError(f"visualization.{name} must be a valid colour.")
         if str(self.residue_scope).strip().lower() not in {"interaction", "patch"}:
             raise ConfigurationError("visualization.residue_scope must be 'interaction' or 'patch'.")
         _require_boolean(
@@ -241,8 +272,8 @@ class GUIConfig:
 
     window_width: int = 1400
     window_height: int = 900
-    min_window_width: int = 1180
-    min_window_height: int = 760
+    min_window_width: int = 960
+    min_window_height: int = 600
     sidebar_width: int = 460
     ttk_theme: str = "clam"
     tk_scaling: float = 1.2
@@ -273,6 +304,8 @@ class TopoPPIRunConfig:
     chain_b: str = "B"
     output_file: str = "interface_map.png"
     prolif_file: Optional[str] = None
+    interaction_source: str = "prolif"
+    atlas_output: Optional[str] = None
     contact_distance_angstrom: float = DEFAULT_CONTACT_DISTANCE_ANGSTROM
     surface: SurfaceConfig = field(default_factory=SurfaceConfig)
     topology: TopologyConfig = field(default_factory=TopologyConfig)
@@ -294,12 +327,20 @@ class TopoPPIRunConfig:
             raise ConfigurationError("Choose the partner chain (Chain B).")
         if str(self.chain_a).strip() == str(self.chain_b).strip():
             raise ConfigurationError("Choose two different chains for Chain A and Chain B.")
+        if self.interaction_source not in {"prolif", "geometric"}:
+            raise ConfigurationError("interaction_source must be 'prolif' or 'geometric'.")
+        if self.interaction_source == "geometric" and self.prolif_file:
+            raise ConfigurationError("Choose geometric interactions or a ProLIF file; remove the other setting.")
         if self.prolif_file and not Path(self.prolif_file).is_file():
             raise ConfigurationError(f"ProLIF JSON was not found: {self.prolif_file}")
         if not str(self.output_file).strip():
             raise ConfigurationError("Choose an output image path.")
         if Path(self.output_file).expanduser().resolve() == input_path.expanduser().resolve():
             raise ConfigurationError("The output image path matches the input structure path.")
+        if self.atlas_output:
+            atlas_path = Path(self.atlas_output).expanduser().resolve()
+            if atlas_path in {input_path.expanduser().resolve(), Path(self.output_file).expanduser().resolve()}:
+                raise ConfigurationError("Choose an atlas output path separate from the input structure and output image.")
         _require_positive("contact_distance_angstrom", self.contact_distance_angstrom)
         self.surface.validate()
         self.topology.validate()

@@ -90,7 +90,7 @@ jobs:
         shell: pwsh
         run: |
           $installer = (Resolve-Path "${{ steps.artifact.outputs.installer }}").Path
-          $installDir = Join-Path $env:RUNNER_TEMP "TopoPPI Installed"
+          $installDir = Join-Path $env:RUNNER_TEMP "TopoPPI 用户"
           $installLog = Join-Path $env:RUNNER_TEMP "TopoPPI Installer.log"
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
           Set-Content -Path (Join-Path $installDir "TopoPPI GUI.cmd") -Value "legacy launcher"
@@ -133,6 +133,10 @@ jobs:
               throw "The command prompt launcher does not configure $expected."
             }
           }
+          $promptOutput = @("topoppi --version", "exit") | & $commandPrompt
+          if ($LASTEXITCODE -ne 0 -or !(($promptOutput -join "`n").Contains("topoppi ${{ steps.version.outputs.value }}"))) {
+            throw "The installed command prompt could not run TopoPPI from its Unicode directory."
+          }
 
           $guiSmoke = @'
           import tkinter as tk
@@ -153,12 +157,22 @@ jobs:
 
           $env:MPLBACKEND = "Agg"
           $smokeOutput = Join-Path $env:RUNNER_TEMP "topoppi-windows-smoke.png"
+          $smokeAtlas = Join-Path $env:RUNNER_TEMP "topoppi-windows-smoke.npz"
           & $cli tests\fixtures\tiny_complex.pdb -A A -B B `
             --prolif tests\fixtures\prolif_interactions.json `
             --min-points 1 `
+            --map-style footprints --export-atlas $smokeAtlas `
             -o $smokeOutput
           if ($LASTEXITCODE -ne 0 -or !(Test-Path $smokeOutput)) {
             throw "The installed TopoPPI pipeline smoke failed."
+          }
+          & $cli render $smokeAtlas -o (Join-Path $env:RUNNER_TEMP "topoppi-windows-reopened.pdf")
+          if ($LASTEXITCODE -ne 0) {
+            throw "The installed CLI could not render its saved footprint atlas."
+          }
+          & $python installer\smoke_footprints.py $smokeAtlas (Join-Path $env:RUNNER_TEMP "topoppi-windows-desktop")
+          if ($LASTEXITCODE -ne 0) {
+            throw "The installed GUI footprint editing smoke failed."
           }
 
           $uninstaller = Join-Path $installDir "unins000.exe"

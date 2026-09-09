@@ -1,12 +1,14 @@
 # macOS application
 
-TopoPPI 1.3 is available as separate disk images for Apple Silicon and Intel
-Macs:
+TopoPPI 2.0 provides disk images for Apple Silicon and Intel Macs:
 
 ```text
-TopoPPI-1.3-macos-arm64.dmg       Apple Silicon
-TopoPPI-1.3-macos-x86_64.dmg      Intel
+TopoPPI-2.0-macos-arm64.dmg       Apple Silicon
+TopoPPI-2.0-macos-x86_64.dmg      Intel
 ```
+
+Download an image from the [v2.0 release](https://github.com/GeraltZeroZhong/TopoPPI/releases/tag/v2.0),
+or follow the [local build instructions](#build-locally).
 
 Open **Apple menu > About This Mac** when you need to check the processor. A Mac
 with an Apple chip uses `arm64`; a Mac showing an Intel processor uses `x86_64`.
@@ -18,25 +20,24 @@ with an Apple chip uses `arm64`; a Mac showing an Intel processor uses `x86_64`.
 3. Try to open **TopoPPI**. If macOS blocks it, open **System Settings >
    Privacy & Security**, choose **Open Anyway** for TopoPPI, and confirm
    **Open**. Older macOS releases may also offer **Open** through the app's
-   Control-click menu. The v1.3 app uses ad-hoc signing and has no Apple
-   notarization.
+   Control-click menu. These builds use ad-hoc signing.
 4. Keep the preparation window open while TopoPPI expands its bundled runtime.
    This commonly takes several minutes on the first launch.
 
 The app stores its prepared runtime at:
 
 ```text
-~/Library/Application Support/TopoPPI/1.3-<architecture>
+~/Library/Application Support/TopoPPI/2.0-<architecture>
 ```
 
 Later launches reuse that runtime and start more quickly. The disk image already
-contains Python, the scientific dependencies, and OptCuts, so installation and
-analysis need no Conda setup or network connection.
+contains Python, the scientific dependencies and OptCuts. Runtime preparation
+and analysis use these local files and work offline.
 
 TopoPPI, OptCuts, and third-party license notices are stored inside the app at
 `Contents/Resources`. The machine-readable inventory records packages whose
-upstream metadata does not identify a license file, so release reviewers can
-resolve those entries without blocking local builds.
+upstream metadata leaves the license file unspecified, for review during
+release preparation.
 
 ## Upgrade
 
@@ -60,7 +61,7 @@ When the app reports a startup failure:
 1. Quit TopoPPI.
 2. In Finder, choose **Go > Go to Folder**.
 3. Open `~/Library/Application Support/TopoPPI`.
-4. Move the `1.3-arm64` or `1.3-x86_64` folder to the Trash.
+4. Move the `2.0-arm64` or `2.0-x86_64` folder to the Trash.
 5. Open TopoPPI again and keep the preparation window open.
 
 This rebuilds the packaged runtime from the copy inside the application.
@@ -78,9 +79,8 @@ also want to clear that preference data. The launcher log can be removed from
 
 ## Build locally
 
-Build on the target architecture. The active Conda or Micromamba environment
-must contain TopoPPI and its runtime dependencies. Install these build tools as
-well:
+Build on the target architecture in a Conda or Micromamba environment containing
+TopoPPI and its runtime dependencies. Install these build tools as well:
 
 - Xcode Command Line Tools
 - Git
@@ -109,14 +109,19 @@ bash installer/macos/build_app.sh \
 The disk image is written under `release-assets/`. Open it and complete one
 first-launch check on the same architecture before sharing it.
 
+When testing another build with the same application version, remove its
+prepared runtime as described in [Repair startup](#repair-startup). The next
+launch expands the runtime from the updated application.
+
 ## Release contract
 
 The `macOS App` GitHub Actions workflow builds on native Apple Silicon and Intel
 macOS 15 runners. Each job runs a full command-line mapping with its native
 OptCuts executable, creates the application disk image, expands the packaged
-runtime, runs a second mapping from that runtime, and uploads the verified image
-to the central `Publish` workflow.
+runtime, and creates a footprint map with the packaged executable. It then
+reopens the saved atlas through the CLI and exercises Tk highlighting, numerical
+annotation, figure export and atlas saving. The image passes to the central
+`Publish` workflow after these checks.
 
 The packaged launcher and OptCuts executable target macOS 12 or later. The app
-uses ad-hoc code signing. A future Developer ID and notarization workflow can
-remove the manual approval step for downloaded releases.
+uses ad-hoc code signing, with the first-open steps described above.

@@ -1,6 +1,6 @@
 # TopoPPI benchmark evidence schema (v2.0)
 
-_A user guide to the benchmark reports and evidence artifacts written by TopoPPI 1.3._
+_A guide to the benchmark reports and evidence artifacts written by TopoPPI 2.0._
 
 ---
 
@@ -10,10 +10,10 @@ Each benchmark writes one evidence bundle under `BenchmarkConfig.output_root`.
 The bundle contains a human-readable summary, machine-readable details, row-level
 audit records, resume state, and file checksums.
 
-This guide covers TopoPPI `1.3`. Within `benchmark_report.json`,
-`topoppi_version` records `1.3`, while `schema_version` records `2.0`. The two
-fields identify the application release and the serialized report layout used
-by readers and analysis scripts.
+This guide covers the TopoPPI `2.0` working-tree version. Within
+`benchmark_report.json`, `topoppi_version` identifies the application and
+`schema_version` identifies the serialized layout. Both currently read `2.0`;
+they are versioned independently for readers and analysis scripts.
 
 All JSON files use strict JSON syntax. Undefined and non-finite scientific
 values are serialized as `null`, which allows standard JSON parsers to read the
@@ -108,7 +108,7 @@ outside the standard same-domain method comparison.
 | Field | Contents |
 | --- | --- |
 | `schema_version` | Machine-readable report layout, currently `2.0` |
-| `topoppi_version` | TopoPPI application version, currently `1.3` |
+| `topoppi_version` | TopoPPI application version, currently `2.0` |
 | `created_at` | UTC creation time |
 | `config` | Complete serialized `BenchmarkConfig` |
 | `runtime` | Execution model, environment, Git state, resources, hashes, and time budgets |
@@ -268,9 +268,9 @@ singular values.
 
 | Metric | Definition | Reading direction |
 | --- | --- | --- |
-| Log stretch | `(|log(s1)| + |log(s2)|) / 2` | Lower values indicate less stretch |
+| Log stretch | `(\|log(s1)\| + \|log(s2)\|) / 2` | Lower values indicate less stretch |
 | Angle distortion | Mean absolute error across the three corner angles, in radians | Lower values indicate better angle preservation |
-| Log-area distortion | `|log(A_uv / A_3d)|` after similarity alignment | Lower values indicate better area preservation |
+| Log-area distortion | `\|log(A_uv / A_3d)\|` after similarity alignment | Lower values indicate better area preservation |
 | Symmetric Dirichlet | `(s1^2 + s2^2 + s1^-2 + s2^-2) / 2` | Identity value `2`; lower values indicate less distortion |
 | Flip rate | Area-weighted fraction of faces with non-positive signed UV area after one patch-level orientation choice | Local orientation diagnostic |
 | Global injectivity | Polygonal overlap and self-contact checks over the full patch | Whole-map validity diagnostic |

@@ -400,7 +400,7 @@ def main() -> None:
         "eligible_weight_count": len(eligible),
         "efficacy_domain_rule": (
             "intersection of complete finite exact-pair identities across all candidate weights; "
-            "geometry validity is an all-attempted eligibility guard, not a row filter"
+            "geometry validity determines candidate eligibility across all attempted structures"
         ),
         "shared_complete_pair_structure_count": len(ordered_common_identities),
         "matched_standard_baseline_rule": (

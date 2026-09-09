@@ -32,6 +32,8 @@ class SingleRunForm:
     chain_a: str
     chain_b: str
     prolif: str
+    interaction_source: str
+    map_style: str
     cutoff: float
     contact_distance_angstrom: float
     res: float
@@ -78,6 +80,7 @@ class SingleRunForm:
             chain_b=self.chain_b,
             output_file=target_output,
             prolif_file=self.prolif or None,
+            interaction_source=self.interaction_source,
             contact_distance_angstrom=self.contact_distance_angstrom,
             surface=_surface_config(self),
             topology=replace(DEFAULT_RUN_CONFIG.topology, distance_cutoff=self.cutoff),
@@ -93,6 +96,7 @@ class SingleRunForm:
             visualization=replace(
                 DEFAULT_RUN_CONFIG.visualization,
                 min_points=self.min_points,
+                map_style=self.map_style,
             ),
         )
         return config
@@ -243,6 +247,10 @@ def parse_single_run_form(raw: Mapping[str, object]) -> SingleRunForm:
         chain_a=chain_a,
         chain_b=chain_b,
         prolif=prolif,
+        interaction_source=_choice(
+            raw.get("interaction_source", "prolif"), "Interaction source", {"prolif", "geometric"}
+        ),
+        map_style=_choice(raw.get("map_style", "markers"), "Map style", {"markers", "footprints"}),
         cutoff=_parse_float(
             raw.get("cutoff", DEFAULT_GUI_CONFIG.default_patch_cutoff),
             "Interface cutoff",

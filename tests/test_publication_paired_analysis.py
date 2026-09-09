@@ -216,7 +216,7 @@ def test_exact_pairing_and_signed_transport_effects():
     assert result["sensitivity_cohorts"]["unique_sequence_correspondence"]["attrition"]["retained_pair_count"] == 1
     semantics = result["predicted_cohort_semantics"]
     assert semantics["analysis_role"] == "controlled fixed-pose conformational sensitivity analysis"
-    assert "not docking" in semantics["interpretation_limit"]
+    assert "experimental relative pose held constant" in semantics["interpretation_limit"]
     availability = result["upstream_predicted_interface_availability"]
     assert availability["predicted_contact_present_pair_count"] == 1
     assert availability["predicted_contact_absent_pair_count"] == 0

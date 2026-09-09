@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\TopoPPI",
-    [string]$Version = "1.3",
+    [string]$Version = "2.0",
     [string]$PackageSpec = "",
     [string]$MicromambaUrl = "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-win-64"
 )
@@ -91,7 +91,7 @@ try {
     Write-Step "Installing TopoPPI from $ResolvedPackageSpec"
     Invoke-External $Python @("-m", "pip", "install", "--upgrade", "pip")
     Invoke-External $Python @("-m", "pip", "install", "prolif>=2.0")
-    Invoke-External $Python @("-m", "pip", "install", "--no-deps", $ResolvedPackageSpec)
+    Invoke-External $Python @("-m", "pip", "install", "--no-deps", "--force-reinstall", $ResolvedPackageSpec)
 
     Write-Step "Verifying ProLIF interaction stack"
     Invoke-External $Python @(
@@ -118,18 +118,18 @@ try {
     Remove-Item (Join-Path $InstallDir "TopoPPI GUI.cmd") -Force -ErrorAction SilentlyContinue
     $CliLauncher = @"
 @echo off
-set "TOPOPPI_HOME=$InstallDir"
-set "TOPOPPI_OPTCUTS_BIN=$OptCutsExe"
-"$EnvDir\Scripts\topoppi.exe" %*
+set "TOPOPPI_HOME=%~dp0"
+set "TOPOPPI_OPTCUTS_BIN=%~dp0bin\OptCuts_bin.exe"
+"%~dp0env\Scripts\topoppi.exe" %*
 "@
     Set-Content -Path (Join-Path $InstallDir "TopoPPI CLI.cmd") -Value $CliLauncher -Encoding ASCII
 
     $CommandPromptLauncher = @"
 @echo off
-set "TOPOPPI_HOME=$InstallDir"
-set "TOPOPPI_OPTCUTS_BIN=$OptCutsExe"
-set "PATH=$EnvDir\Scripts;$EnvDir;%PATH%"
-cd /d "$InstallDir"
+set "TOPOPPI_HOME=%~dp0"
+set "TOPOPPI_OPTCUTS_BIN=%~dp0bin\OptCuts_bin.exe"
+set "PATH=%~dp0env\Scripts;%~dp0env;%PATH%"
+cd /d "%~dp0"
 echo TopoPPI $Version command prompt
 echo Run topoppi --help to see the available commands.
 echo Run exit or close this window when you are finished.

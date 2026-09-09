@@ -223,7 +223,8 @@ def write_sensitivity_plan(
         },
         "scenarios": records,
         "execution_guard": (
-            "Writing this plan does not execute a benchmark. Formal scenarios require an explicit confirmation flag."
+            "Run the scenarios with topoppi-benchmark run-sensitivity. "
+            "Include --confirm-formal-benchmark for formal scenarios."
         ),
     }
     plan_path = target_root / "sensitivity_plan.json"

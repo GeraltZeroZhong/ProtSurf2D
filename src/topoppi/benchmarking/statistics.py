@@ -54,8 +54,8 @@ def _dyadic_robust_mean_sensitivity(
     theory assumes two distinct members per observation; their count remains
     explicit in the returned audit record.
 
-    This is a dependence sensitivity, not the primary interval.  The normal
-    interval uses the asymptotic dyadic-robust standard error.  A second
+    These intervals describe sensitivity to shared-member dependence. The
+    normal interval uses the asymptotic dyadic-robust standard error. A second
     interval uses the finite-degree t critical-value heuristic proposed by
     Tabord-Meehan, kappa = G * median(degree) / max(degree), to expose highly
     unbalanced dependency graphs.

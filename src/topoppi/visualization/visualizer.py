@@ -25,8 +25,27 @@ from topoppi.interactions.interaction_engine import (
     residue_sequence_token,
 )
 from topoppi.interactions.metadata import INTERACTION_COLORS, INTERACTION_TYPES
+from topoppi.visualization.export import save_figure
+from topoppi.visualization.footprint_rendering import plot_footprints
 
 logger = logging.getLogger("Visualizer")
+
+
+def select_patches_for_display(patches, visualizer, *, map_style=None, min_points=None):
+    """Select visible patches and return interaction counts for the complete atlas."""
+    patches = list(patches)
+    map_style = visualizer.config.map_style if map_style is None else map_style
+    min_points = visualizer.config.min_points if min_points is None else min_points
+    counts = [int(visualizer.count_patch_interaction_residues(patch)) for patch in patches]
+    if map_style == "footprints":
+        return patches, counts
+    displayed = [patch for patch, count in zip(patches, counts, strict=True) if count >= min_points]
+    if patches and not displayed:
+        raise ValueError(
+            f"No interface patch meets the marker display threshold ({min_points} interaction residues). "
+            "Lower the threshold or select Residue footprints to display the complete atlas."
+        )
+    return displayed, counts
 
 
 class InterfaceVisualizer:
@@ -85,6 +104,7 @@ class InterfaceVisualizer:
         self._geometric_types_cache = None
         self.artist_map = {}
         self.last_report = {}
+        self.last_style = {}
 
         # --- Interaction categories (canonicalized from ProLIF output) ---
         self.interaction_types = list(INTERACTION_TYPES)
@@ -352,9 +372,24 @@ class InterfaceVisualizer:
             "mesh_fill_alpha": self.config.mesh_fill_alpha,
             "mesh_line_alpha": self.config.mesh_line_alpha,
         }
+        for key, default in {
+            "map_style": "markers", "highlight_residues": (), "annotation_file": "",
+            "annotation_label": "Value", "value_min": None, "value_max": None,
+            "footprint_labels": "all", "show_seams": True, "show_residue_borders": True,
+            "footprint_color": "#DCE8EF", "highlight_color": "#A64D79", "missing_color": "#D9D9D9",
+        }.items():
+            style[key] = getattr(self.config, key, default)
         if style_config:
             style.update(style_config)
         style["residue_scope"] = self._normalize_residue_scope(style["residue_scope"])
+        if style["map_style"] not in {"markers", "footprints"}:
+            raise ValueError("map_style must be 'markers' or 'footprints'.")
+        if style["map_style"] == "footprints":
+            if self.interaction_residue_source == "none" and style["residue_scope"] == "interaction":
+                raise ValueError("Interaction scope requires interaction data; use residue_scope='patch' for all residues.")
+            if not style_config or "font_size" not in style_config:
+                style["font_size"] = 8
+            return plot_footprints(self, patches, style, output_file=output_file, show=show)
         if self.interaction_residue_source == "none" and (
             style["color_by_type"] or style["residue_scope"] == "interaction"
         ):
@@ -365,6 +400,7 @@ class InterfaceVisualizer:
         interaction_colors = dict(self.interaction_colors)
         interaction_colors.update(style.get("interaction_colors") or {})
         style["interaction_colors"] = interaction_colors
+        self.last_style = style
 
         n_patches = len(patches)
         use_uv_atlas = bool(style.get("use_uv_atlas", True))
@@ -443,11 +479,12 @@ class InterfaceVisualizer:
 
         fig.tight_layout(rect=[0, 0, 1, 0.87 if has_interaction_legend else 0.95])
         if output_file:
-            fig.savefig(output_file, dpi=300)
+            save_figure(fig, output_file)
         if show:
             plt.show()
         self.last_report = {
             "status": "ok",
+            "map_style": "markers",
             "patch_count": int(n_patches),
             "residue_scope": style["residue_scope"],
             "interaction_residue_source": self.interaction_residue_source,
@@ -612,6 +649,9 @@ class InterfaceVisualizer:
                     )
                     label_records.append({"text": txt, "scatter": sc, "connector": connector})
                 self.artist_map[uid] = {
+                    "residue_key": residue_label,
+                    "anchor": np.asarray([u_center, v_center]),
+                    "collection": None,
                     "scatter": sc,
                     "text": txt,
                     "connector": connector,

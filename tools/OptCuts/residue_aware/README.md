@@ -12,7 +12,7 @@ For an original footprint component with total mass `M` and post-cut piece masse
 1 - sum_k (m_k / M)^2
 ```
 
-Component scores are weighted by their share of the footprint mass. The sidecar then assigns a non-negative objective weight to each residue. TopoPPI uses `1 + contact degree`, where contact degree is the number of distinct partner residues in the ProLIF records.
+Component scores are weighted by their share of the footprint mass. The sidecar then assigns a non-negative objective weight to each residue. TopoPPI uses `1 + contact degree`, where contact degree counts distinct partner residues. ProLIF supplies these partners by default; single-run `--interaction-source geometric` uses the configured heavy-atom contact distance.
 
 The pinned patch maps every OptCuts split or merge path to original edge IDs, adds `alpha * candidateDelta(...)` to the seam-energy change, and commits the selected transaction after the topology operation succeeds. The complete objective and the weight-zero geometry ablation use the same candidate search.
 
@@ -61,6 +61,6 @@ The script checks out the pinned upstream commit, applies the residue and reprod
 
 TopoPPI's OBJ writer collapses diskification copies, retains repaired vertex-fan copies, and records the root source ID for every geometry vertex. Supplied UV seams use texture indices. Sparse local solves keep candidate memory bounded.
 
-An A-B-A-B topology cycle is identified from the complete face-corner connectivity partition and cohesive-edge state. The two states must be distinct, with matching seam energy and distortion on each recurrence, before OptCuts uses its critical-lambda query.
+An A-B-A-B topology cycle is identified from the complete face-corner connectivity partition and cohesive-edge state. OptCuts uses its critical-lambda query after confirming two distinct states with matching seam energy and distortion on each recurrence.
 
 See the [benchmark evidence schema](../../../docs/benchmark_schema.md#residue-footprint-fragmentation) for the formal objective definition and exported measurements. Build provenance and platform distribution details are in the [OptCuts notice](../NOTICE.md).
