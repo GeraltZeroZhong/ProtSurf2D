@@ -13,13 +13,14 @@ All notable changes to TopoPPI are documented here.
 - Added a persistent Windows installation log and propagated environment setup errors to the installer's exit status.
 - Supported Unicode Windows installation directories with a temporary cache drive, automatic mapping cleanup, and UTF-8 command output.
 - Enabled the existing Tk interaction tests in Linux CI and added installed-runtime footprint editing and atlas rendering to platform smoke runs.
+- Kept ProLIF calculations for each chain pair in the calling process, avoiding nested process pools in GUI and benchmark workers.
 - Preserved completed computation when a display setting needs correction, allowing style recovery and atlas export without repeating optimization.
 - Preserved residue highlights, manual colors and label positions after failed or cancelled runs, and waited for active tasks to finish cleanup when closing the desktop app.
 - Kept residue annotation scope consistent across CLI rendering and GUI atlas editing.
 - Separated the displayed map's input and annotations from the next run, captured settings when a run starts, and adapted desktop controls to smaller screens.
 - Added UTF-8 BOM support for annotation CSV files and colorbar extensions for values outside selected limits, with corresponding residue counts in the rendering report.
 - Restored marker interaction thresholds when rendering saved atlases while retaining every optimized patch for footprint mode.
-- Expanded CLI help for saved-atlas rendering and footprint controls, and synchronized the public guides with the 2.0 working-tree version.
+- Expanded CLI help for saved-atlas rendering and footprint controls, and synchronized the public guides with the 2.0 release.
 
 ## [1.3] - 2026-08-30
 
