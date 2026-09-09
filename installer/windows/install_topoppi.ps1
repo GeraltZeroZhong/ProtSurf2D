@@ -48,6 +48,11 @@ try {
     }
 
     $env:MAMBA_ROOT_PREFIX = $RootPrefix
+    # Libsolv reads Windows cache paths through the Unicode file API.
+    $env:MAMBA_MAMBA_REPODATA_PARSING = "false"
+    # Earlier micromamba versions retained by existing installations use this name.
+    $env:MAMBA_EXPERIMENTAL_REPODATA_PARSING = "false"
+    Invoke-External $Micromamba @("--version")
     $Packages = @(
         "python=3.10",
         "tk",
