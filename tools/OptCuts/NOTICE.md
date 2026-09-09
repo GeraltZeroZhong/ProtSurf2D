@@ -13,7 +13,7 @@ TopoPPI uses a pinned, residue-aware build of [OptCuts](https://github.com/limin
 | Linux release artifact | `OptCuts_bin-linux-x86_64` |
 | Windows release artifact | `OptCuts_bin-windows-x86_64.exe` |
 | Linux SHA-256 | `d7990fc4f1ca46e0ba06b70801b64701dfdeb795f7efee6f7b9f197aa3b426eb` |
-| Python distribution policy | The executable is excluded from wheels and source distributions |
+| Python distribution contents | Python code and build instructions; native executables use platform artifacts |
 
 The pinned source and patch set build both the complete residue-aware objective and its weight-zero geometry ablation. The integration provides:
 
@@ -30,7 +30,7 @@ The complete objective and geometry ablation share the same candidate policy. Se
 
 ## Platform artifacts
 
-The `Windows Installer` workflow builds the pinned source for Windows x86-64, embeds it in `TopoPPI-<version>-windows-x86_64-setup.exe`, and publishes the standalone executable with its `.sha256` file.
+The `Windows Installer` workflow builds the pinned source for Windows x86-64, embeds it in `TopoPPI-<version>-windows-x86_64-setup.exe`, and passes the standalone executable and its `.sha256` file to the central publication workflow.
 
 The `macOS App` workflow builds the same source natively for Apple Silicon and Intel. Each architecture-matched disk image contains its OptCuts executable.
 

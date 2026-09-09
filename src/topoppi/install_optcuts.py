@@ -65,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="topoppi-install-optcuts",
         description="Download and install the OptCuts binary for TopoPPI.",
+        epilog="Example: topoppi-install-optcuts --install-dir ./tools",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
@@ -81,17 +82,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--url",
         default=None,
-        help="Release artifact URL override for a mirror or local test",
+        help="Download URL for an alternative release location or mirror",
     )
     parser.add_argument(
         "--checksum",
         default=None,
-        help="Expected SHA-256; Linux uses the built-in digest and other artifacts use their release sidecar",
+        help="Expected SHA-256 (default: bundled Linux digest or the platform release's checksum file)",
     )
     parser.add_argument(
         "--checksum-url",
         default=None,
-        help="SHA-256 sidecar URL override",
+        help="URL of the release checksum file",
     )
     parser.add_argument(
         "--install-dir",

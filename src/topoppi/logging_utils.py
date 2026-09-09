@@ -17,3 +17,4 @@ def setup_logging(verbose: bool = False) -> None:
     dependency_level = logging.NOTSET if verbose else logging.ERROR
     for name in ("MDAnalysis", "prolif"):
         logging.getLogger(name).setLevel(dependency_level)
+    logging.getLogger("fontTools").setLevel(logging.NOTSET if verbose else logging.WARNING)

@@ -133,9 +133,9 @@ class SurfaceGenerator:
         """
         Run the pipeline: Voxelization -> Density -> Isosurface -> Mesh.
 
-        The configured isovalue is fixed across structures.  A field that does
-        not cross that value is a transparent failure, not an input-specific
-        parameter adjustment.
+        The configured isovalue stays fixed across structures. If the density
+        field does not cross it, the method records the condition in
+        ``last_report`` and returns ``None``.
         """
         config = self.config
         num_atoms = len(self.coords)

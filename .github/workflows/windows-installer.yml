@@ -90,16 +90,22 @@ jobs:
         shell: pwsh
         run: |
           $installer = (Resolve-Path "${{ steps.artifact.outputs.installer }}").Path
-          $installDir = Join-Path $env:RUNNER_TEMP "TopoPPI Installed"
+          $installDir = Join-Path $env:RUNNER_TEMP "TopoPPI 用户"
           $installLog = Join-Path $env:RUNNER_TEMP "TopoPPI Installer.log"
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
           Set-Content -Path (Join-Path $installDir "TopoPPI GUI.cmd") -Value "legacy launcher"
+          $mappedDrivesBefore = @(& subst.exe)
           $installProcess = Start-Process -FilePath $installer -ArgumentList @(
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$installDir`"", "/LOG=`"$installLog`""
           ) -PassThru
           $installProcess | Wait-Process -Timeout 1800 -ErrorAction Stop
+          $mappedDrivesAfter = @(& subst.exe)
+          if (($mappedDrivesBefore -join "`n") -ne ($mappedDrivesAfter -join "`n")) {
+            throw "Windows setup left a package-cache drive mapped."
+          }
           if ($installProcess.ExitCode -ne 0) {
             Get-Content $installLog -Tail 200 -ErrorAction SilentlyContinue
+            Get-Content (Join-Path $installDir "installation.log") -Tail 200 -ErrorAction SilentlyContinue
             throw "TopoPPI setup failed with exit code $($installProcess.ExitCode)."
           }
 
@@ -110,6 +116,8 @@ jobs:
           $commandPromptShortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\TopoPPI\TopoPPI Command Prompt.lnk"
           foreach ($path in @($python, $cli, $commandPrompt, $guiLauncher, $commandPromptShortcut)) {
             if (!(Test-Path $path)) {
+              Get-Content $installLog -Tail 200 -ErrorAction SilentlyContinue
+              Get-Content (Join-Path $installDir "installation.log") -Tail 200 -ErrorAction SilentlyContinue
               throw "Installed application file is missing: $path"
             }
           }
@@ -133,6 +141,10 @@ jobs:
               throw "The command prompt launcher does not configure $expected."
             }
           }
+          $promptOutput = @("topoppi --version", "exit") | & $commandPrompt
+          if ($LASTEXITCODE -ne 0 -or !(($promptOutput -join "`n").Contains("topoppi ${{ steps.version.outputs.value }}"))) {
+            throw "The installed command prompt could not run TopoPPI from its Unicode directory."
+          }
 
           $guiSmoke = @'
           import tkinter as tk
@@ -152,13 +164,24 @@ jobs:
           }
 
           $env:MPLBACKEND = "Agg"
+          $env:PYTHONUTF8 = "1"
           $smokeOutput = Join-Path $env:RUNNER_TEMP "topoppi-windows-smoke.png"
+          $smokeAtlas = Join-Path $env:RUNNER_TEMP "topoppi-windows-smoke.npz"
           & $cli tests\fixtures\tiny_complex.pdb -A A -B B `
             --prolif tests\fixtures\prolif_interactions.json `
             --min-points 1 `
+            --map-style footprints --export-atlas $smokeAtlas `
             -o $smokeOutput
           if ($LASTEXITCODE -ne 0 -or !(Test-Path $smokeOutput)) {
             throw "The installed TopoPPI pipeline smoke failed."
+          }
+          & $cli render $smokeAtlas -o (Join-Path $env:RUNNER_TEMP "topoppi-windows-reopened.pdf")
+          if ($LASTEXITCODE -ne 0) {
+            throw "The installed CLI could not render its saved footprint atlas."
+          }
+          & $python installer\smoke_footprints.py $smokeAtlas (Join-Path $env:RUNNER_TEMP "topoppi-windows-desktop")
+          if ($LASTEXITCODE -ne 0) {
+            throw "The installed GUI footprint editing smoke failed."
           }
 
           $uninstaller = Join-Path $installDir "unins000.exe"
@@ -179,6 +202,17 @@ jobs:
           if (Test-Path $commandPromptShortcut) {
             throw "The TopoPPI command prompt shortcut remained after uninstall."
           }
+
+      - name: Upload installation failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installation-logs
+          path: |
+            ${{ runner.temp }}/TopoPPI Installer.log
+            ${{ runner.temp }}/TopoPPI 用户/installation.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Reject private paths in release executables
         shell: pwsh

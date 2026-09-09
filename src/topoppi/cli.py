@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from dataclasses import replace
+from pathlib import Path
 from typing import Optional, Sequence
 
 from topoppi import __version__
@@ -19,13 +21,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="topoppi",
         description="Create an annotated 2D interface map from a protein complex.",
-        epilog="Example: topoppi complex.pdb -A A -B B -o interface_map.png",
+        epilog=(
+            "Create a map: topoppi complex.pdb -A A -B B -o interface_map.png\n"
+            "Restyle an atlas: topoppi render interface.npz -o interface.svg\n"
+            "Use topoppi render --help for saved-atlas options. Open the desktop app with topoppi-gui."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     structure = parser.add_argument_group("structure and interactions")
     structure.add_argument("pdb_file", help="Input PDB or mmCIF structure")
+    structure.add_argument(
+        "--interaction-source",
+        choices=("prolif", "geometric"),
+        default=defaults.interaction_source,
+        help="Interaction partners for residue weights and annotations: ProLIF or heavy-atom contacts",
+    )
     structure.add_argument(
         "-A",
         "--chain-a",
@@ -43,34 +55,34 @@ def build_parser() -> argparse.ArgumentParser:
     structure.add_argument(
         "--prolif",
         default=argparse.SUPPRESS,
-        help="Existing ProLIF JSON; leave empty to generate one beside the output image",
+        help="Existing ProLIF JSON; omit to generate one beside the output image",
     )
     structure.add_argument(
         "--geometric-fallback-distance",
         dest="contact_distance",
         type=float,
         default=defaults.contact_distance_angstrom,
-        help="Heavy-atom cutoff for distance-based interaction fallback in Angstroms",
+        help="Heavy-atom contact distance in Angstroms for the geometric source or selected fallback",
     )
     structure.add_argument(
         "--residue-scope",
         choices=("interaction", "patch"),
-        default=defaults.visualization.residue_scope,
-        help="Residues to annotate: ProLIF interactions or the full surface patch",
+        default=argparse.SUPPRESS,
+        help="Annotation scope: interaction partners or all patch residues (footprints default: patch)",
     )
     structure.add_argument(
         "--min-points",
         dest="min_points",
         type=int,
         default=defaults.visualization.min_points,
-        help="Minimum Chain A interaction residues required to display a patch",
+        help="Minimum surface-chain interaction residues per visible marker patch; footprints show all patches",
     )
     structure.add_argument(
         "--uniform-residue-color",
         action="store_false",
         dest="color_by_interaction_type",
         default=argparse.SUPPRESS,
-        help="Use one color for annotated residues; the default colors show interaction types",
+        help="Use one color for residue markers; marker colors normally show interaction types",
     )
     structure.add_argument(
         "--geometric-interaction-fallback",
@@ -118,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         dest="adaptive_resolution",
         default=argparse.SUPPRESS,
-        help="Stop when the requested grid spacing exceeds the voxel budget",
+        help="Keep the requested grid spacing; report an error if the grid exceeds --max-voxels",
     )
 
     mapping = parser.add_argument_group("UV mapping and OptCuts")
@@ -199,13 +211,114 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     output = parser.add_argument_group("output and logging")
-    output.add_argument("--output", "-o", default=defaults.output_file, help="Output image")
+    output.add_argument("--output", "-o", default=defaults.output_file, help="Output PNG, TIFF, SVG, or PDF figure")
     output.add_argument("--show", action="store_true", help="Open the Matplotlib figure after saving")
     output.add_argument("--verbose", "-v", action="store_true", help="Show debug logging")
+    output.add_argument("--export-atlas", metavar="FILE.npz", help="Save a self-contained atlas for later rendering")
+    _add_footprint_options(parser)
     return parser
 
 
+def _add_footprint_options(parser):
+    group = parser.add_argument_group("residue footprints")
+    group.add_argument("--map-style", choices=("markers", "footprints"), default=argparse.SUPPRESS,
+                       help="Display residues as markers or filled surface footprints (new maps: markers)")
+    group.add_argument("--highlight", nargs="+", default=argparse.SUPPRESS,
+                       help="Residue keys to highlight, e.g. A:GLU:37 A:TYR:40 (commas also accepted)")
+    group.add_argument("--annotation-file", metavar="CSV", default=argparse.SUPPRESS,
+                       help="UTF-8 CSV with residue,value columns for footprint coloring; blank values appear as missing")
+    group.add_argument("--annotation-label", default=argparse.SUPPRESS, help="Colorbar label, including units")
+    group.add_argument("--vmin", dest="value_min", type=float, default=argparse.SUPPRESS,
+                       help="Lower colorbar limit; values below it use the endpoint color and an extension marker")
+    group.add_argument("--vmax", dest="value_max", type=float, default=argparse.SUPPRESS,
+                       help="Upper colorbar limit; values above it use the endpoint color and an extension marker")
+    group.add_argument("--labels", dest="footprint_labels", choices=("all", "highlighted", "none"),
+                       default=argparse.SUPPRESS, help="Footprint labels within the annotation scope (new maps: all)")
+    group.add_argument("--hide-seams", dest="show_seams", action="store_false", default=argparse.SUPPRESS,
+                       help="Hide cut-seam outlines on footprint maps")
+    group.add_argument("--hide-residue-borders", dest="show_residue_borders", action="store_false",
+                       default=argparse.SUPPRESS, help="Hide internal residue borders on footprint maps")
+    for name, meaning in (("footprint-color", "Base region color"),
+                          ("highlight-color", "Highlighted region color"),
+                          ("missing-color", "Color for missing numeric values")):
+        group.add_argument(f"--{name}", default=argparse.SUPPRESS,
+                           help=f"{meaning}; accepts a Matplotlib color name or hex value")
+
+
+def _visualization_overrides(args):
+    names = ("map_style", "annotation_file", "annotation_label", "value_min", "value_max", "footprint_labels",
+             "show_seams", "show_residue_borders", "footprint_color", "highlight_color", "missing_color")
+    changes = {name: getattr(args, name) for name in names if hasattr(args, name)}
+    if hasattr(args, "highlight"):
+        changes["highlight_residues"] = tuple(
+            token for value in args.highlight for token in value.replace(",", " ").split()
+        )
+    return changes
+
+
+def _render_atlas(argv):
+    from topoppi.visualization.atlas_io import load_atlas, save_atlas
+    from topoppi.visualization.visualizer import select_patches_for_display
+
+    parser = argparse.ArgumentParser(
+        prog="topoppi render",
+        description="Restyle and export an atlas using its saved geometry and UV coordinates.",
+        epilog=("Unspecified settings retain their saved values. Example: topoppi render interface.npz "
+                "--map-style footprints --highlight A:GLU:37 -o interface.svg"),
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("atlas_file", help="Atlas NPZ saved by TopoPPI")
+    parser.add_argument("-o", "--output", required=True, help="PNG, TIFF, SVG, or PDF image")
+    parser.add_argument("--export-atlas", help="Save the updated atlas and style")
+    parser.add_argument("--clear-annotations", action="store_true", help="Remove saved external values")
+    parser.add_argument("--residue-scope", choices=("interaction", "patch"), default=argparse.SUPPRESS,
+                        help="Annotate interaction partners or all patch residues")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show debug logging")
+    _add_footprint_options(parser)
+    args = parser.parse_args(argv)
+    setup_logging(args.verbose)
+    log = logging.getLogger("topoppi.cli")
+    try:
+        from topoppi.pipeline import _prepare_output_path
+
+        if Path(args.output).resolve() == Path(args.atlas_file).resolve():
+            raise ValueError("Choose an image output path separate from the saved atlas.")
+        _prepare_output_path(args.output)
+        document = load_atlas(args.atlas_file)
+        style = dict(document.style)
+        changes = _visualization_overrides(args)
+        if args.clear_annotations or "annotation_file" in changes:
+            style.pop("annotation_values", None)
+            style["annotation_file"] = ""
+        style.update(changes)
+        if hasattr(args, "residue_scope"):
+            style["residue_scope"] = args.residue_scope
+        elif changes.get("map_style") == "footprints" and document.style.get("map_style") != "footprints":
+            style["residue_scope"] = "patch"
+        displayed_patches, _counts = select_patches_for_display(
+            document.patches, document.visualizer, map_style=style.get("map_style", "markers"),
+            min_points=style.get("min_points", document.visualizer.config.min_points),
+        )
+        figure = document.visualizer.plot_patches(displayed_patches, output_file=args.output, show=False,
+                                                  style_config=style)
+        if args.export_atlas:
+            if Path(args.export_atlas).resolve() == Path(args.output).resolve():
+                raise ValueError("Choose separate image and atlas output paths.")
+            save_atlas(args.export_atlas, document.patches, document.visualizer, run_metadata=document.metadata)
+        import matplotlib.pyplot as plt
+
+        plt.close(figure)
+        log.info("Saved map to %s; reused the stored UV coordinates.", args.output)
+    except (TopoPPIError, OSError, ValueError, KeyError) as exc:
+        log.error("%s", exc)
+        return 1
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "render":
+        return _render_atlas(argv[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     setup_logging(args.verbose)
@@ -217,6 +330,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         chain_b=args.chain_b,
         output_file=args.output,
         prolif_file=getattr(args, "prolif", None),
+        interaction_source=args.interaction_source,
+        atlas_output=args.export_atlas,
         contact_distance_angstrom=args.contact_distance,
         surface=replace(
             DEFAULT_RUN_CONFIG.surface,
@@ -264,13 +379,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             DEFAULT_RUN_CONFIG.visualization,
             show_plot=args.show,
             min_points=args.min_points,
-            residue_scope=args.residue_scope,
+            residue_scope=getattr(args, "residue_scope", "patch" if getattr(args, "map_style", "markers") == "footprints"
+                                  else DEFAULT_RUN_CONFIG.visualization.residue_scope),
             color_by_interaction_type=getattr(
                 args,
                 "color_by_interaction_type",
                 DEFAULT_RUN_CONFIG.visualization.color_by_interaction_type,
             ),
-            use_geometric_interaction_fallback=args.geometric_interaction_fallback,
+            use_geometric_interaction_fallback=args.geometric_interaction_fallback or args.interaction_source == "geometric",
+            **_visualization_overrides(args),
         ),
     )
     try:

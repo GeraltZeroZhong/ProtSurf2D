@@ -321,7 +321,8 @@ def generate_prolif_interactions(
         mol_a = _mda_to_prolif_with_explicit_hydrogen(chain_a_atoms, chain_a, plf, log)
         mol_b = _mda_to_prolif_with_explicit_hydrogen(chain_b_atoms, chain_b, plf, log)
         fp = plf.Fingerprint()
-        fp.run_from_iterable([mol_b], mol_a, progress=False)
+        # A single chain pair uses one task, including calls from the GUI worker.
+        fp.run_from_iterable([mol_b], mol_a, progress=False, n_jobs=1)
         records = _to_records(
             fp.to_dataframe(),
             residue_tokens_a=_chain_residue_token_map(chain_a_atoms),

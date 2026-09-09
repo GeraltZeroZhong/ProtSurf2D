@@ -94,8 +94,7 @@ def main() -> None:
         raise ValueError("worker-timeout must be finite and positive.")
     if args.worker_timeout <= 2.0 * args.optcuts_timeout:
         raise ValueError(
-            "worker-timeout must exceed both matched OptCuts method-arm budgets so a later arm "
-            "cannot be censored by construction."
+            "Set worker-timeout above twice optcuts-timeout to allow both matched OptCuts runs to complete."
         )
     for path in (args.input_folder, args.manifest, args.binary, args.coordinate_audit):
         if not path.exists():

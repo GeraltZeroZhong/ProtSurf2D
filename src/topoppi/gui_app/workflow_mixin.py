@@ -6,7 +6,7 @@ import shutil
 import sys
 import threading
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
@@ -87,8 +87,8 @@ class WorkflowMixin:
         params = form.to_params()
         if params["formal_mode"] and not messagebox.askyesno(
             "Confirm Formal Benchmark",
-            "This starts the full formal benchmark after a read-only preflight. "
-            "Use the guarded topoppi-benchmark CLI for publication runs when possible.\n\n"
+            "This runs the full formal benchmark with the selected inputs and output folder. "
+            "The run starts after its preflight checks pass.\n\n"
             "Continue?",
         ):
             self.log("Formal benchmark cancelled before preflight; no output was changed.")
@@ -103,7 +103,8 @@ class WorkflowMixin:
         )
         self._update_run_summary()
         self._begin_task("Starting benchmark pipeline...", progress_mode="determinate")
-        threading.Thread(target=self.run_benchmark_pipeline, args=(params, config), daemon=True).start()
+        self._worker_thread = threading.Thread(target=self.run_benchmark_pipeline, args=(params, config), daemon=True)
+        self._worker_thread.start()
 
     def run_benchmark_pipeline(self, params, config: BenchmarkConfig):
         try:
@@ -270,9 +271,10 @@ class WorkflowMixin:
             optimizer = OptCutsUVOptimizer(optcuts_config, cancel_event=self._cancel_event)
             optcuts_artifact = optimizer.preflight_binary()
             input_sha256 = sha256_file(params["path"])
-            provided_prolif = params["prolif"]
+            explicit_geometric = config.interaction_source == "geometric"
+            provided_prolif = params["prolif"] if not explicit_geometric else ""
             prolif_file = provided_prolif
-            if not prolif_file:
+            if not prolif_file and not explicit_geometric:
                 self.log("No ProLIF JSON selected. Generating the required ProLIF annotations automatically.")
                 self.set_stage_progress("Load", 8, "Resolving interactions")
                 prolif_file = self.resolve_prolif_interactions(
@@ -284,7 +286,15 @@ class WorkflowMixin:
                     allow_geometric_fallback=(config.visualization.use_geometric_interaction_fallback),
                 )
                 self._check_cancelled()
-            prolif_source = "provided" if provided_prolif else "generated" if prolif_file else "geometric_fallback"
+            prolif_source = (
+                "geometric"
+                if explicit_geometric
+                else "provided"
+                if provided_prolif
+                else "generated"
+                if prolif_file
+                else "geometric_fallback"
+            )
             t0 = time.perf_counter()
             if prolif_file:
                 interaction_partners = load_prolif_partner_map(
@@ -315,9 +325,9 @@ class WorkflowMixin:
                     atoms_B,
                     distance_cutoff=float(params["contact_distance_angstrom"]),
                 )
-                interaction_source = "geometric_fallback"
+                interaction_source = "geometric" if explicit_geometric else "geometric_fallback"
                 self.log(
-                    "Explicit geometric fallback: {} Chain-A residues and {} residue pairs at <= {:g} Angstrom.".format(
+                    "Geometric contacts: {} Chain-A residues and {} residue pairs at <= {:g} Angstrom.".format(
                         len(interaction_partners),
                         sum(len(values) for values in interaction_partners.values()),
                         float(params["contact_distance_angstrom"]),
@@ -359,10 +369,16 @@ class WorkflowMixin:
                 chain_b_id=params["chain_b"],
                 structure_label=Path(params["path"]).stem,
                 prolif_file=prolif_file,
-                config=config.visualization,
+                config=replace(
+                    config.visualization,
+                    use_geometric_interaction_fallback=(
+                        explicit_geometric or config.visualization.use_geometric_interaction_fallback
+                    ),
+                ),
                 interaction_partner_map=interaction_partners,
                 contact_distance_angstrom=params["contact_distance_angstrom"],
             )
+            viz.interaction_residue_source = interaction_source
 
             topo = TopologyManager(mesh_A, coords_B, config=topology_config)
             patches = topo.get_interface_patches()
@@ -405,15 +421,13 @@ class WorkflowMixin:
                 viz,
                 params["min_points"],
             )
+            if config.visualization.map_style == "footprints":
+                selected_patches = optimized_patches
             self.log(
                 f"Display filter summary (minimum interaction residues = {params['min_points']}): "
-                f"displayed={valid_count}, hidden={invalid_count}; all were optimized."
+                f"above threshold={valid_count}, below threshold={invalid_count}; "
+                f"displayed={len(selected_patches)}; all were optimized."
             )
-            if not selected_patches:
-                raise ValueError(
-                    f"No interface meets the display threshold ({params['min_points']} interaction residues)."
-                )
-
             self.log("Rendering visualization...")
             self.set_stage_progress("Render", 92, "Preparing figure")
             stage_timings["total_pipeline_sec"] = time.perf_counter() - run_start
@@ -449,7 +463,7 @@ class WorkflowMixin:
                         else (
                             "Chain A/B heavy-atom residue pair distance <= "
                             f"{float(params['contact_distance_angstrom']):g} Angstrom "
-                            "(explicit geometric fallback)"
+                            f"({interaction_source.replace('_', ' ')})"
                         )
                     ),
                     "chain_a_interaction_residue_count": len(interaction_partners),
@@ -465,6 +479,7 @@ class WorkflowMixin:
                     "valid_patches": valid_count,
                     "invalid_patches": invalid_count,
                     "displayed_patches": len(selected_patches),
+                    "footprint_display_uses_complete_domain": config.visualization.map_style == "footprints",
                 },
             }
             self.set_stage_progress("Render", 100, "Rendering")
@@ -474,6 +489,7 @@ class WorkflowMixin:
                 selected_patches,
                 manifest,
                 params,
+                optimized_patches,
             )
         except PipelineCancelled as exc:
             self.post_to_ui(self.finish_cancelled, self._previous_result_message(str(exc)))
@@ -507,15 +523,19 @@ class WorkflowMixin:
             return f"{message}\n\nThe canvas still shows the previous successful result."
         return message
 
-    def accept_pipeline_result(self, viz, patches, manifest, params):
-        self.update_plot(
-            viz,
-            patches,
-            self.get_style_config(),
-            complete_task=True,
-            run_params=params,
-            run_manifest=manifest,
-        )
+    def accept_pipeline_result(self, viz, patches, manifest, params, all_patches=None):
+        self._pending_single_run = {
+            "viz": viz,
+            "patches": list(patches),
+            "all_patches": list(patches if all_patches is None else all_patches),
+            "manifest": dict(manifest),
+            "params": dict(params),
+            "style": dict(self._run_style or {}),
+        }
+        if self._run_style is not None:
+            self._restore_atlas_style(self._run_style)
+        self.var_annotation_target.set("Current map")
+        self._render_pending_result(style=self._run_style)
 
     def _parameterize_patches(self, patches, parameterizer, *, use_input_uv):
         valid_patches = []
@@ -558,7 +578,7 @@ class WorkflowMixin:
             else (
                 "distinct Chain-B residues with any heavy-atom pair at distance <= "
                 f"{float(contact_distance_angstrom):g} Angstrom "
-                "(explicit geometric fallback)"
+                f"({interaction_source.replace('_', ' ')})"
             )
         )
         report["residue_footprint_fragmentation"] = {

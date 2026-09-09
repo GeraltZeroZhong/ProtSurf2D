@@ -1,10 +1,10 @@
 # Contributing to TopoPPI
 
-Thank you for helping improve TopoPPI. This guide covers the shortest path from a source checkout to a tested change.
+This guide covers the path from a source checkout to a tested change.
 
 ## Set up the development environment
 
-TopoPPI currently targets Python 3.10. Create the complete Conda environment and install the project in editable mode:
+TopoPPI 2.0 uses Python 3.10. Create the Conda environment and install the project in editable mode:
 
 ```bash
 conda env create -f environment.yml
@@ -41,6 +41,11 @@ python -m pytest
 python -m ruff check .
 ```
 
+On a headless Linux machine, run the tests with `xvfb-run -a python -m pytest`
+after installing Xvfb and xauth. CI uses this command so the Tk editing tests
+execute alongside the pipeline tests. Windows and macOS run Tk tests through
+their native display systems.
+
 Tests that launch the external OptCuts executable use the `requires_optcuts` marker. Dataset-scale or long-running tests use `slow`. A new test should carry one of these markers only when its runtime or dependency warrants it.
 
 For packaging changes, also build and inspect both distributions:
@@ -54,9 +59,14 @@ For user-facing command changes, exercise the relevant help page and one represe
 
 ```bash
 topoppi --help
+topoppi render --help
 topoppi-benchmark --help
 topoppi-install-optcuts --help
 ```
+
+The platform workflows also run `installer/smoke_footprints.py` against a saved
+atlas from the installed CLI. This checks the packaged GUI's atlas opening,
+highlighting, CSV annotation and save operations.
 
 ## Open a pull request
 

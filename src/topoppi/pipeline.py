@@ -6,7 +6,7 @@ import logging
 import platform
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
@@ -36,11 +36,11 @@ from topoppi.mesh.parameterization import Parameterizer
 from topoppi.mesh.surface import SurfaceGenerator
 from topoppi.mesh.topology import TopologyManager
 from topoppi.optimization.optcuts import OptCutsUVOptimizer
-from topoppi.visualization.visualizer import InterfaceVisualizer
+from topoppi.visualization.visualizer import InterfaceVisualizer, select_patches_for_display
 
 logger = logging.getLogger("topoppi.pipeline")
 
-_SUPPORTED_OUTPUT_SUFFIXES = frozenset({".png", ".tif", ".tiff"})
+_SUPPORTED_OUTPUT_SUFFIXES = frozenset({".png", ".tif", ".tiff", ".pdf", ".svg"})
 
 
 @dataclass
@@ -71,6 +71,16 @@ def run_interface_mapping(config: TopoPPIRunConfig, log: Optional[logging.Logger
     start_time = time.perf_counter()
     _prepare_output_path(config.output_file)
     chain_data = _load_chain_data(config, log)
+    if config.visualization.map_style == "footprints":
+        from topoppi.visualization.footprint_rendering import read_residue_annotations, resolve_residue_keys
+
+        try:
+            source_keys = source_atom_residue_labels(chain_data[1])
+            resolve_residue_keys(config.visualization.highlight_residues, source_keys)
+            if config.visualization.annotation_file:
+                read_residue_annotations(config.visualization.annotation_file, source_keys)
+        except (OSError, ValueError) as exc:
+            raise PipelineError(f"Invalid footprint annotations: {exc}") from exc
 
     optimizer = OptCutsUVOptimizer(config.optcuts)
     try:
@@ -109,6 +119,8 @@ def run_interface_mapping(config: TopoPPIRunConfig, log: Optional[logging.Logger
         log,
         interaction_partner_map=interaction_partners,
         interaction_source=interaction_source,
+        run_metadata={"optimizer_report": optimizer_report, "surface_generation": surface_report,
+                      "topology_extraction": topology_report},
     )
 
     elapsed = time.perf_counter() - start_time
@@ -137,7 +149,7 @@ def _prepare_output_path(output_file: str) -> None:
     suffix = output_path.suffix.lower()
     if suffix not in _SUPPORTED_OUTPUT_SUFFIXES:
         found = suffix or "no extension"
-        raise PipelineError(f"Unsupported output image extension ({found}). Choose a .png, .tif, or .tiff file.")
+        raise PipelineError(f"Unsupported output image extension ({found}). Choose a .png, .tif, .tiff, .svg, or .pdf file.")
     if output_path.exists() and output_path.is_dir():
         raise PipelineError(f"Output image path is a directory: {output_path}")
     try:
@@ -155,6 +167,8 @@ def _resolve_prolif_file(
     *,
     input_sha256: str,
 ) -> Optional[str]:
+    if config.interaction_source == "geometric":
+        return None
     if config.prolif_file:
         return config.prolif_file
     try:
@@ -215,7 +229,7 @@ def _build_interaction_partner_map(
     input_sha256: str,
 ) -> tuple[Dict[str, Dict[str, int]], str]:
     coords_a, atoms_a, coords_b, atoms_b = chain_data
-    if prolif_file:
+    if prolif_file and config.interaction_source != "geometric":
         try:
             partners = load_prolif_partner_map(
                 prolif_file,
@@ -248,12 +262,12 @@ def _build_interaction_partner_map(
         distance_cutoff=cutoff,
     )
     log.info(
-        "Explicit geometric interaction fallback (<= %.3g Angstrom): %d Chain-A residues, %d residue pairs.",
+        "Geometric contacts (<= %.3g Angstrom): %d Chain-A residues, %d residue pairs.",
         cutoff,
         len(partners),
         sum(len(values) for values in partners.values()),
     )
-    return partners, "geometric_fallback"
+    return partners, "geometric" if config.interaction_source == "geometric" else "geometric_fallback"
 
 
 def _generate_surface(
@@ -349,7 +363,7 @@ def _optimize_patches(
         else (
             "distinct Chain-B residues with any heavy-atom pair at distance <= "
             f"{float(config.contact_distance_angstrom):g} Angstrom "
-            "(explicit geometric fallback)"
+            "(geometric contacts)"
         )
     )
     report["residue_footprint_fragmentation"] = {
@@ -387,6 +401,7 @@ def _render_output(
     *,
     interaction_partner_map: Mapping[str, Mapping[str, int]],
     interaction_source: str,
+    run_metadata: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     log.info("Visualizing results...")
     coords_a, atoms_a, coords_b, atoms_b = chain_data
@@ -401,13 +416,16 @@ def _render_output(
             chain_b_id=config.chain_b,
             structure_label=Path(config.pdb_file).stem,
             prolif_file=prolif_file,
-            config=config.visualization,
+            config=replace(config.visualization, use_geometric_interaction_fallback=True)
+            if config.interaction_source == "geometric" else config.visualization,
             interaction_partner_map=interaction_partner_map,
             contact_distance_angstrom=config.contact_distance_angstrom,
         )
-        displayed_patches, interaction_counts = _select_patches_for_display(
+        viz.interaction_residue_source = interaction_source
+        displayed_patches, interaction_counts = select_patches_for_display(
             patches,
             viz,
+            map_style=config.visualization.map_style,
             min_points=config.visualization.min_points,
         )
         hidden_patch_count = len(patches) - len(displayed_patches)
@@ -428,11 +446,19 @@ def _render_output(
             output_file=str(output_path),
             show=config.visualization.show_plot,
         )
+        if config.atlas_output:
+            from topoppi.visualization.atlas_io import save_atlas
+
+            save_atlas(config.atlas_output, patches, viz,
+                       run_metadata={"config": config.to_dict(), **(run_metadata or {})})
         if not config.visualization.show_plot:
             plt.close(figure)
         report = dict(viz.last_report)
         report["interaction_residue_source"] = interaction_source
+        if config.atlas_output:
+            report["atlas_file"] = str(Path(config.atlas_output).resolve())
         report["display_filter"] = {
+            "policy": "complete_footprints" if config.visualization.map_style == "footprints" else "interaction_threshold",
             "min_points": int(config.visualization.min_points),
             "optimized_patch_count": int(len(patches)),
             "displayed_patch_count": int(len(displayed_patches)),
@@ -442,24 +468,6 @@ def _render_output(
         return report
     except (OSError, ValueError) as exc:
         raise PipelineError(f"Visualization failed: {exc}") from exc
-
-
-def _select_patches_for_display(
-    patches: List[trimesh.Trimesh],
-    viz: InterfaceVisualizer,
-    *,
-    min_points: int,
-) -> tuple[List[trimesh.Trimesh], List[int]]:
-    """Apply the configured interaction-residue display threshold."""
-
-    displayed = []
-    interaction_counts = []
-    for patch in patches:
-        interaction_count = int(viz.count_patch_interaction_residues(patch))
-        interaction_counts.append(interaction_count)
-        if interaction_count >= min_points:
-            displayed.append(patch)
-    return displayed, interaction_counts
 
 
 def _write_run_manifest(result: TopoPPIRunResult, config: TopoPPIRunConfig) -> None:

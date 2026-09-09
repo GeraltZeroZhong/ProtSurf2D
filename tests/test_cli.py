@@ -57,6 +57,25 @@ def _write_evidence_bundle(root: Path) -> Path:
 
 
 class CliTests(unittest.TestCase):
+    def test_footprints_flags_select_complete_scope_and_explicit_weight_source(self):
+        with mock.patch("topoppi.cli.run_interface_mapping") as run:
+            code = cli.main(["input.pdb", "--map-style", "footprints", "--highlight", "A:GLU:37,A:TYR:40",
+                             "--annotation-file", "effects.csv", "--annotation-label", "Effect (kcal/mol)",
+                             "--labels", "highlighted", "--vmin", "-2.5", "--vmax", "2.5",
+                             "--hide-seams", "--export-atlas", "map.npz", "--interaction-source", "geometric",
+                             "-o", "map.svg"])
+        self.assertEqual(code, 0)
+        config = run.call_args.args[0]
+        self.assertEqual(config.visualization.map_style, "footprints")
+        self.assertEqual(config.visualization.residue_scope, "patch")
+        self.assertEqual(config.visualization.highlight_residues, ("A:GLU:37", "A:TYR:40"))
+        self.assertEqual(config.visualization.value_min, -2.5)
+        self.assertEqual(config.visualization.annotation_file, "effects.csv")
+        self.assertFalse(config.visualization.show_seams)
+        self.assertEqual(config.interaction_source, "geometric")
+        self.assertTrue(config.visualization.use_geometric_interaction_fallback)
+        self.assertEqual(config.atlas_output, "map.npz")
+
     def test_help_locates_generated_prolif_beside_the_output_image(self):
         help_text = " ".join(cli.build_parser().format_help().split())
 

@@ -212,13 +212,19 @@ jobs:
           PY
 
           output="$RUNNER_TEMP/topoppi-packaged-smoke.png"
+          atlas="$RUNNER_TEMP/topoppi-packaged-smoke.npz"
           "$runtime/environment/bin/python" -m topoppi.cli \
             tests/fixtures/1bvk.pdb -A A -B B \
             --prolif tests/fixtures/prolif_interactions.json \
             --min-points 1 \
             --optcuts-bin "$runtime/OptCuts_bin" \
+            --map-style footprints --export-atlas "$atlas" \
             -o "$output"
           test -s "$output"
+          "$runtime/environment/bin/python" -m topoppi.cli render "$atlas" \
+            -o "$RUNNER_TEMP/topoppi-packaged-reopened.pdf"
+          "$runtime/environment/bin/python" installer/smoke_footprints.py "$atlas" \
+            "$RUNNER_TEMP/topoppi-packaged-desktop"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7

@@ -1,6 +1,6 @@
 # Publication workflow tools
 
-These scripts turn structure cohorts into frozen TopoPPI benchmark inputs, run-ready configurations, and paired statistical summaries. They are intended for study preparation after the standard [`topoppi-benchmark`](../../README.md#benchmark-a-dataset) workflow is understood.
+These scripts prepare structure cohorts, freeze benchmark inputs and configurations, and produce paired statistical summaries. Start with the standard [`topoppi-benchmark`](../../README.md#benchmark-a-dataset) workflow, then use the stages needed for the study.
 
 Run every command from the repository root in the `topoppi-dev` environment:
 
@@ -16,7 +16,7 @@ Each stage writes new files to an explicit output path. Keep study data outside 
 | Stage | Script | Result |
 | --- | --- | --- |
 | Read PDBbind 2020R1 | `prepare_pdbbind_r1.py` | Traceable dominant chain-pair table |
-| Freeze leakage-safe splits | `cluster_pdbbind_manifest.py` | Sequence-clustered development and test manifests |
+| Freeze clustered splits | `cluster_pdbbind_manifest.py` | Sequence-clustered development and test manifests |
 | Select a compact cohort | `select_benchmark_subset.py` | Deterministic size-stratified, cluster-diverse subset |
 | Materialize exact inputs | `stage_manifest_inputs.py` | Checksum-verified structure directory |
 | Bind interaction evidence | `prepare_manifest_prolif.py` | ProLIF JSON files and a run-ready manifest |
@@ -24,7 +24,7 @@ Each stage writes new files to an explicit output path. Keep study data outside 
 | Download matched dimers | `download_afdb_matches.py` | Cropped predicted complexes and manifest |
 | Build monomer replacements | `build_afdb_monomer_replacements.py` | AFDB monomers aligned into the experimental docking pose |
 | Audit experimental/predicted pairs | `audit_paired_structures.py` | Interface eligibility and geometry quality-control records |
-| Freeze paired strata | `stratify_afdb_paired_geometry.py` | Reconciled dependency-safe manifests and geometry strata |
+| Freeze paired strata | `stratify_afdb_paired_geometry.py` | Reconciled manifests with shared dependency groups and geometry strata |
 | Audit all coordinates | `audit_manifest_coordinates.py` | Coordinate audit consumed by formal configurations |
 | Prepare weight study | `prepare_residue_aware_optcuts_weight_study.py` | Development-only weight configurations and protocol |
 | Select objective weight | `select_residue_aware_optcuts_weight.py` | Frozen selection record from completed development runs |
@@ -59,7 +59,7 @@ flowchart LR
 
 ### Bind ProLIF evidence
 
-Formal comparative and residue-aware runs need a ProLIF record for every included structure. Generate the records after the cohort, chain direction, and file locations are final:
+Formal comparative and residue-aware runs use one ProLIF record per included structure. Generate the records after the cohort, chain direction and file locations are final:
 
 ```bash
 python tools/publication/prepare_manifest_prolif.py \

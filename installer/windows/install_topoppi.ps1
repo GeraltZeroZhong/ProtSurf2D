@@ -1,13 +1,16 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\TopoPPI",
-    [string]$Version = "1.3",
+    [string]$Version = "2.0",
     [string]$PackageSpec = "",
     [string]$MicromambaUrl = "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-win-64"
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+$TranscriptStarted = $false
+$CacheDrive = $null
+$Subst = Join-Path $env:SystemRoot "System32\subst.exe"
 
 function Write-Step {
     param([string]$Message)
@@ -38,13 +41,34 @@ try {
     $BundledOptCuts = Join-Path $InstallDir "installer\assets\OptCuts_bin-windows-x86_64.exe"
 
     New-Item -ItemType Directory -Force -Path $InstallDir, $BinDir | Out-Null
+    Start-Transcript -Path (Join-Path $InstallDir "installation.log") -Force | Out-Null
+    $TranscriptStarted = $true
 
     if (!(Test-Path $Micromamba)) {
         Write-Step "Downloading micromamba"
         Invoke-WebRequest -Uri $MicromambaUrl -OutFile $Micromamba
     }
 
+    # Micromamba's index reader and archive extractor need an ASCII cache path.
+    # Keep the environment at its selected path and map only cache access during setup.
+    if ($RootPrefix -match '[^\x00-\x7F]') {
+        $UsedDrives = [System.IO.Directory]::GetLogicalDrives()
+        foreach ($Code in 90..68) {
+            $CandidateDrive = "{0}:" -f [char]$Code
+            if ($UsedDrives -notcontains "$CandidateDrive\") {
+                Invoke-External $Subst @($CandidateDrive, $InstallDir)
+                $CacheDrive = $CandidateDrive
+                $RootPrefix = "$CacheDrive\$([System.IO.Path]::GetRandomFileName())"
+                break
+            }
+        }
+        if ($null -eq $CacheDrive) {
+            throw "Windows setup needs an unused drive letter for its package cache."
+        }
+    }
     $env:MAMBA_ROOT_PREFIX = $RootPrefix
+    $env:PYTHONUTF8 = "1"
+    Invoke-External $Micromamba @("--version")
     $Packages = @(
         "python=3.10",
         "tk",
@@ -89,9 +113,9 @@ try {
     }
 
     Write-Step "Installing TopoPPI from $ResolvedPackageSpec"
-    Invoke-External $Python @("-m", "pip", "install", "--upgrade", "pip")
+    Invoke-External $Python @("-m", "pip", "install", "--upgrade", "--force-reinstall", "pip")
     Invoke-External $Python @("-m", "pip", "install", "prolif>=2.0")
-    Invoke-External $Python @("-m", "pip", "install", "--no-deps", $ResolvedPackageSpec)
+    Invoke-External $Python @("-m", "pip", "install", "--no-deps", "--force-reinstall", $ResolvedPackageSpec)
 
     Write-Step "Verifying ProLIF interaction stack"
     Invoke-External $Python @(
@@ -118,18 +142,20 @@ try {
     Remove-Item (Join-Path $InstallDir "TopoPPI GUI.cmd") -Force -ErrorAction SilentlyContinue
     $CliLauncher = @"
 @echo off
-set "TOPOPPI_HOME=$InstallDir"
-set "TOPOPPI_OPTCUTS_BIN=$OptCutsExe"
-"$EnvDir\Scripts\topoppi.exe" %*
+set "PYTHONUTF8=1"
+set "TOPOPPI_HOME=%~dp0"
+set "TOPOPPI_OPTCUTS_BIN=%~dp0bin\OptCuts_bin.exe"
+"%~dp0env\Scripts\topoppi.exe" %*
 "@
     Set-Content -Path (Join-Path $InstallDir "TopoPPI CLI.cmd") -Value $CliLauncher -Encoding ASCII
 
     $CommandPromptLauncher = @"
 @echo off
-set "TOPOPPI_HOME=$InstallDir"
-set "TOPOPPI_OPTCUTS_BIN=$OptCutsExe"
-set "PATH=$EnvDir\Scripts;$EnvDir;%PATH%"
-cd /d "$InstallDir"
+set "PYTHONUTF8=1"
+set "TOPOPPI_HOME=%~dp0"
+set "TOPOPPI_OPTCUTS_BIN=%~dp0bin\OptCuts_bin.exe"
+set "PATH=%~dp0env\Scripts;%~dp0env;%PATH%"
+cd /d "%~dp0"
 echo TopoPPI $Version command prompt
 echo Run topoppi --help to see the available commands.
 echo Run exit or close this window when you are finished.
@@ -140,7 +166,18 @@ cmd.exe /K
     Write-Step "TopoPPI installation finished"
 }
 catch {
-    Write-Error "TopoPPI installation failed: $($_.Exception.Message)"
-    Write-Error "If this failed while installing OptCuts, confirm the GitHub release includes OptCuts_bin-windows-x86_64.exe and its .sha256 sidecar."
+    Write-Error "TopoPPI installation failed: $($_.Exception.Message)" -ErrorAction Continue
+    Write-Host "Installation details: $(Join-Path $InstallDir 'installation.log')"
     exit 1
+}
+finally {
+    if ($null -ne $CacheDrive) {
+        if (Test-Path $RootPrefix) {
+            Remove-Item -Recurse -Force $RootPrefix
+        }
+        Invoke-External $Subst @($CacheDrive, "/D")
+    }
+    if ($TranscriptStarted) {
+        Stop-Transcript | Out-Null
+    }
 }

@@ -11,7 +11,8 @@ from topoppi import __version__
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="topoppi-gui",
-        description="Open the TopoPPI desktop application.",
+        description="Create, annotate, and export protein interface maps in the TopoPPI desktop app.",
+        epilog="Choose a PDB/mmCIF structure to create a map, or use Open Atlas to continue editing a saved map.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser

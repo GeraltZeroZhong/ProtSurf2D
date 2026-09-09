@@ -2643,7 +2643,7 @@ class BenchmarkRunner:
                 "signature": residue_aware_comparison_signature,
                 "rule": (
                     "separate exact-domain finite-output intersection across standard and residue-aware "
-                    "OptCuts methods; injectivity is retained as geometry QC, not an inclusion condition"
+                    "OptCuts methods; injectivity is reported independently as geometry QC"
                 ),
             },
             "independent_optcuts_arm_quality": independent_optcuts_arm_quality,

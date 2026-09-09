@@ -1,4 +1,4 @@
-"""Command-line entry point for auditable benchmark and sensitivity workflows."""
+"""Command-line entry point for benchmark and sensitivity studies."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from topoppi.json_utils import dump_json, dump_json_atomic
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="topoppi-benchmark",
-        description="Preflight, run, or plan reproducible TopoPPI benchmarks.",
+        description="Check inputs, run benchmarks, and compare TopoPPI parameter settings.",
         epilog="Start with: topoppi-benchmark preflight benchmark.json",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -39,35 +39,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     preflight = subparsers.add_parser(
         "preflight",
-        help="Validate a benchmark config without generating surfaces or starting workers.",
+        help="Check benchmark inputs, configuration, and planned resources",
+        description="Check benchmark inputs, configuration, and planned resources before a run.",
     )
     preflight.add_argument("config", help="Benchmark JSON configuration")
     preflight_output = preflight.add_mutually_exclusive_group()
     preflight_output.add_argument("--json", dest="json_output", action="store_true", help="Print full JSON")
     preflight_output.add_argument("--output-json", help="Write the full preflight report to this path")
 
-    run = subparsers.add_parser("run", help="Execute a benchmark configuration")
+    run = subparsers.add_parser("run", help="Run a benchmark configuration",
+                               description="Run the configured structures and write benchmark reports.")
     run.add_argument("config", help="Benchmark JSON configuration")
     run.add_argument("--json", dest="json_output", action="store_true", help="Print full result JSON")
     run.add_argument(
         "--confirm-formal-benchmark",
         action="store_true",
-        help="Required when formal_mode=true; acknowledges that the full benchmark will start.",
+        help="Start a benchmark configured with formal_mode=true",
     )
 
     plan = subparsers.add_parser(
         "plan-sensitivity",
-        help="Write a frozen sensitivity plan without running benchmark jobs.",
+        help="Write a sensitivity plan and its scenario configurations",
+        description="Generate scenario configurations for a parameter sensitivity study.",
     )
     plan.add_argument("config", help="Baseline benchmark JSON configuration")
     plan.add_argument("axes", help="JSON mapping of sensitivity axes to numeric values")
     plan.add_argument("--plan-root", required=True, help="Directory for the plan and scenario configs")
-    plan.add_argument("--design", choices=("one_factor", "factorial"), default="one_factor")
+    plan.add_argument("--design", choices=("one_factor", "factorial"), default="one_factor",
+                      help="Vary one axis at a time or include all parameter combinations (default: one_factor)")
     plan.add_argument("--json", dest="json_output", action="store_true", help="Print full result JSON")
 
     sensitivity_preflight = subparsers.add_parser(
         "preflight-sensitivity",
-        help="Read-only preflight of every scenario in a frozen sensitivity plan.",
+        help="Check inputs and resources for each planned scenario",
+        description="Check the configurations and inputs for every scenario in a sensitivity plan.",
     )
     sensitivity_preflight.add_argument("plan", help="sensitivity_plan.json")
     sensitivity_preflight_output = sensitivity_preflight.add_mutually_exclusive_group()
@@ -76,17 +81,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     sensitivity_run = subparsers.add_parser(
         "run-sensitivity",
-        help="Execute every scenario in a frozen sensitivity plan.",
+        help="Run every scenario in a saved sensitivity plan",
+        description="Run a sensitivity plan and collect the scenario results.",
     )
     sensitivity_run.add_argument("plan", help="sensitivity_plan.json")
     sensitivity_run.add_argument("--json", dest="json_output", action="store_true", help="Print full result JSON")
     sensitivity_run.add_argument(
         "--confirm-formal-benchmark",
         action="store_true",
-        help="Required if any scenario has formal_mode=true.",
+        help="Start scenarios configured with formal_mode=true",
     )
 
-    verify = subparsers.add_parser("verify", help="Verify a completed benchmark evidence bundle")
+    verify = subparsers.add_parser("verify", help="Check a completed benchmark report and its artifacts",
+                                  description="Check that a benchmark report and its recorded artifacts agree.")
     verify.add_argument("report", help="Path to benchmark_report.json")
     verify.add_argument("--json", dest="json_output", action="store_true", help="Print full result JSON")
     return parser

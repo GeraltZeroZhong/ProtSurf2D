@@ -15,6 +15,7 @@ include docs/assets/topoppi-gui-sanitized.png
 recursive-include src/topoppi/assets *.ico *.png
 recursive-include installer/windows *.iss *.ps1 *.pyw *.md
 recursive-include installer/macos *.sh *.py *.md *.in *.c TopoPPI
+include installer/smoke_footprints.py
 include tools/OptCuts/NOTICE.md
 include tools/OptCuts/LICENSE.txt
 include tools/OptCuts/THIRD_PARTY_LICENSES.txt

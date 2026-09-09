@@ -1,6 +1,6 @@
 #define MyAppName "TopoPPI"
 #ifndef MyAppVersion
-#define MyAppVersion "1.3"
+#define MyAppVersion "2.0"
 #endif
 #ifndef MyPackageSpec
 #define MyPackageSpec ""
@@ -55,6 +55,14 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 Type: dirifempty; Name: "{app}"
 
 [Code]
+var
+  BootstrapExitCode: Integer;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  Result := BootstrapExitCode;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Parameters: String;
@@ -77,11 +85,17 @@ begin
     ewWaitUntilTerminated,
     ResultCode
   ) then
+  begin
+    BootstrapExitCode := 1;
     RaiseException('TopoPPI could not start its environment setup.');
+  end;
 
   if ResultCode <> 0 then
+  begin
+    BootstrapExitCode := ResultCode;
     RaiseException(
       'TopoPPI setup failed with exit code ' + IntToStr(ResultCode) +
-      '. Review the PowerShell output and try again.'
+      '. See ' + ExpandConstant('{app}\installation.log') + ' for details.'
     );
+  end;
 end;

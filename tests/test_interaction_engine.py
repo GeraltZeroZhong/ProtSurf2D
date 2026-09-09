@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -23,6 +24,24 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class InteractionEngineTests(unittest.TestCase):
+    def test_single_chain_pair_generates_contacts_without_a_process_pool(self):
+        import prolif as plf
+
+        with (
+            tempfile.TemporaryDirectory() as output_dir,
+            mock.patch.object(
+                plf.Fingerprint,
+                "_run_iter_parallel",
+                side_effect=AssertionError("A single chain pair must run in the calling process"),
+            ),
+        ):
+            result = generate_prolif_interactions(
+                FIXTURES / "1bvk.pdb", "A", "B", output_dir=output_dir,
+            )
+            payload = json.loads(Path(result).read_text(encoding="utf-8"))
+            self.assertTrue(payload["interactions"])
+            self.assertEqual(payload["engine"], "prolif")
+
     def test_mmcif_suffixes_support_automatic_prolif_generation(self):
         with tempfile.TemporaryDirectory() as tmp:
             for suffix, chain_a, chain_b in ((".cif", "A", "B"), (".mmcif", "surface", "partner")):

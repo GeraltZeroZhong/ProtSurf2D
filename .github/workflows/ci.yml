@@ -36,9 +36,13 @@ jobs:
         shell: bash -el {0}
         run: pip install -e ".[dev,benchmark,meshio]"
 
+      - name: Install virtual display
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+
       - name: Run tests
+        timeout-minutes: 5
         shell: bash -el {0}
-        run: python -m pytest
+        run: xvfb-run -a python -m pytest -v -o faulthandler_timeout=60
 
       - name: Lint
         shell: bash -el {0}
@@ -49,6 +53,7 @@ jobs:
         run: |
           python -c "import topoppi; print(topoppi.__version__)"
           python -m topoppi.cli --help
+          python -m topoppi.cli render --help
           python -m topoppi.install_optcuts --help
 
       - name: Full pipeline smoke
@@ -60,10 +65,14 @@ jobs:
             --prolif tests/fixtures/prolif_interactions.json \
             --min-points 1 \
             --optcuts-bin tools/OptCuts/OptCuts_bin \
+            --map-style footprints --export-atlas /tmp/topoppi-ci-interface.npz \
             -o /tmp/topoppi-ci-interface.png
           test -s /tmp/topoppi-ci-interface.png
+          python -m topoppi.cli render /tmp/topoppi-ci-interface.npz -o /tmp/topoppi-ci-interface.svg
+          xvfb-run -a python installer/smoke_footprints.py /tmp/topoppi-ci-interface.npz /tmp/topoppi-ci-desktop
 
       - name: Build package
+        timeout-minutes: 5
         shell: bash -el {0}
         run: |
           rm -rf dist build src/*.egg-info
@@ -123,7 +132,7 @@ jobs:
           tar -xzf dist/*.tar.gz -C "$source_tree" --strip-components=1
           (
             cd "$source_tree"
-            PYTHONPATH=src python -m pytest
+            PYTHONPATH=src xvfb-run -a python -m pytest -v -o faulthandler_timeout=60
           )
 
       - name: Audit Linux OptCuts release binary

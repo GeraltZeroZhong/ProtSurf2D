@@ -23,6 +23,33 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class PipelineTests(unittest.TestCase):
+    def test_explicit_geometric_source_skips_prolif_generation(self):
+        config = replace(DEFAULT_RUN_CONFIG, interaction_source="geometric")
+        with mock.patch("topoppi.pipeline.generate_prolif_interactions") as generate:
+            self.assertIsNone(_resolve_prolif_file(config, logging.getLogger(), input_sha256="unused"))
+        generate.assert_not_called()
+        loader = PDBLoader(FIXTURES / "tiny_complex.pdb")
+        coords_a, atoms_a = loader.get_chain_data("A")
+        coords_b, atoms_b = loader.get_chain_data("B")
+        partners, source = _build_interaction_partner_map(
+            (coords_a, atoms_a, coords_b, atoms_b), None, config, logging.getLogger(), input_sha256="unused",
+        )
+        self.assertEqual(source, "geometric")
+        self.assertTrue(partners)
+
+    def test_footprint_mode_retains_patches_without_interaction_markers(self):
+        config = replace(DEFAULT_RUN_CONFIG, visualization=replace(DEFAULT_RUN_CONFIG.visualization,
+                                                                  map_style="footprints", min_points=10))
+        visualizer, patch = mock.Mock(), mock.Mock()
+        visualizer.count_patch_interaction_residues.return_value = 0
+        visualizer.last_report = {"displayed_residue_count": 3}
+        with mock.patch("topoppi.pipeline.InterfaceVisualizer", return_value=visualizer), mock.patch("topoppi.pipeline.plt.close"):
+            report = _render_output([patch], ([], [], [], []), None, config, logging.getLogger(),
+                                    interaction_partner_map={}, interaction_source="geometric")
+        self.assertEqual(visualizer.plot_patches.call_args.args[0], [patch])
+        self.assertEqual(report["display_filter"]["hidden_patch_count"], 0)
+        self.assertEqual(report["display_filter"]["policy"], "complete_footprints")
+
     def test_output_path_is_prepared_before_structure_work(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "new" / "results" / "interface.TIFF"
@@ -66,7 +93,7 @@ class PipelineTests(unittest.TestCase):
                     ):
                         with self.assertRaisesRegex(
                             PipelineError,
-                            r"Choose a \.png, \.tif, or \.tiff file",
+                            r"Choose a \.png, \.tif, \.tiff, \.svg, or \.pdf file",
                         ):
                             run_interface_mapping(config)
 
@@ -341,6 +368,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             report["display_filter"],
             {
+                "policy": "interaction_threshold",
                 "min_points": 10,
                 "optimized_patch_count": 1,
                 "displayed_patch_count": 1,

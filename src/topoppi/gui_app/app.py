@@ -18,21 +18,33 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
         self.root = root
         self.config = config
         self.root.title(f"TopoPPI {__version__} - Protein Interface Mapping")
-        self.root.geometry(f"{self.config.window_width}x{self.config.window_height}")
-        self.root.minsize(self.config.min_window_width, self.config.min_window_height)
+        width = min(self.config.window_width, self.root.winfo_screenwidth() - 40)
+        height = min(self.config.window_height, self.root.winfo_screenheight() - 80)
+        self.root.geometry(f"{width}x{height}")
+        self.root.minsize(min(self.config.min_window_width, width), min(self.config.min_window_height, height))
 
         self._ui_thread_id = threading.get_ident()
         self._ui_queue = queue.Queue()
         self._busy = False
         self._closed = False
+        self._closing = False
+        self._worker_thread = None
         self._cancel_event = threading.Event()
 
         self.current_fig = None
         self.current_toolbar = None
         self._successful_single_run = None
+        self._pending_single_run = None
+        self._run_style = None
         self._drag_state = None
         self.label_offsets = {}
         self.marker_color_overrides = {}
+        self.residue_color_overrides = {}
+        self.annotation_values = None
+        self._current_annotation_file = ""
+        self._highlights_edited_for_input = False
+        self._next_run_annotations = None
+        self.loaded_atlas_style = {}
         self.log_history = []
         self.current_run_log = []
         self.chain_residue_counts = {}
@@ -158,8 +170,21 @@ class ProtSurfApp(UIMixin, WorkflowMixin, PlotMixin):
         self.sidebar_canvas.yview_scroll(delta, "units")
 
     def close(self):
-        self._closed = True
+        if self._closing or self._closed:
+            return
+        self._closing = True
         self._cancel_event.set()
+        self._refresh_action_states()
+        self.btn_cancel.config(state=tk.DISABLED)
+        self.status_var.set("Closing after the active task has stopped...")
+        self._wait_for_worker_exit()
+
+    def _wait_for_worker_exit(self):
+        worker = self._worker_thread
+        if worker is not None and worker.is_alive():
+            self.root.after(self.config.ui_poll_interval_ms, self._wait_for_worker_exit)
+            return
+        self._closed = True
         self._unbind_sidebar_wheel(None)
         self._close_current_figure()
         self.root.destroy()

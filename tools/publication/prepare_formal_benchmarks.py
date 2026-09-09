@@ -339,8 +339,7 @@ def main() -> None:
     maximum_comparative_arm_count = 3
     if args.worker_timeout <= maximum_comparative_arm_count * args.optcuts_timeout:
         raise ValueError(
-            "worker-timeout must exceed three OptCuts method-arm budgets so the "
-            "experimental comparative profile cannot censor a later arm by construction."
+            "Set worker-timeout above three times optcuts-timeout to allow all three OptCuts comparison runs."
         )
     if args.worker_timeout <= args.operational_optcuts_timeout:
         raise ValueError("worker-timeout must exceed the operational OptCuts method-arm budget.")

@@ -73,8 +73,8 @@ PREDICTED_COHORT_SEMANTICS: dict[str, dict[str, object]] = {
         ),
         "evidence_role": "controlled conformational and surface-geometry sensitivity evidence",
         "interpretation_limit": (
-            "this is an optimistic fixed-pose perturbation, not docking, predicted-complex-pose, "
-            "or end-to-end external validation"
+            "fixed-pose monomer perturbation with the experimental relative pose held constant; "
+            "conclusions apply to conformational and surface-geometry sensitivity"
         ),
     },
     "afdb": {

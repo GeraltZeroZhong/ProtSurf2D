@@ -3,45 +3,104 @@ from tkinter import colorchooser, messagebox
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.collections import PathCollection, PolyCollection
+
+from topoppi.errors import ConfigurationError
+from topoppi.visualization.visualizer import select_patches_for_display
 
 
 class PlotMixin:
     def redraw_plot(self):
         if self._busy:
-            self.log("Style updates are disabled while a run is active.")
+            self.log("The current run will use its saved display settings.")
+            return
+        if self._pending_single_run is not None:
+            self._render_pending_result()
             return
         successful_run = self._successful_single_run
         if successful_run is None:
             return
-        style = self.get_style_config()
+        try:
+            style = self.get_style_config()
+        except (ValueError, ConfigurationError) as exc:
+            self.log(f"Could not update style: {exc}")
+            return
         self.log("Updating plot style...")
         self.update_plot(
             successful_run["viz"],
-            successful_run["patches"],
+            successful_run.get("all_patches", successful_run["patches"]),
             style,
             complete_task=False,
         )
 
+    def _render_pending_result(self, style=None):
+        pending = self._pending_single_run
+        try:
+            style = dict(style) if style is not None else self.get_style_config()
+            style["min_points"] = pending["params"].get("min_points", pending["viz"].config.min_points)
+            for key in ("label_offsets", "marker_color_overrides", "residue_color_overrides"):
+                style[key] = dict(pending["style"].get(key, {}))
+        except (ValueError, ConfigurationError) as exc:
+            self._finish_task()
+            self.log(f"Calculation complete. Adjust the display settings and apply the style: {exc}")
+            return False
+        return self.update_plot(
+            pending["viz"], pending["patches"], style, complete_task=True,
+            run_params=pending["params"], run_manifest=pending["manifest"],
+            all_patches=pending["all_patches"],
+        )
+
     def on_pick(self, event):
         artist = event.artist
-        if artist.__class__.__name__ != "PathCollection":
+        if not isinstance(artist, (PathCollection, PolyCollection)) or self._busy or self._pending_single_run is not None:
             return
         gid = artist.get_gid()
         successful_run = self._successful_single_run
         viz = successful_run["viz"] if successful_run else None
         if gid and viz and gid in viz.artist_map:
+            if isinstance(artist, PolyCollection) and viz.last_style.get("annotation_values") is not None:
+                self.log("Numeric annotations control region colors. Clear annotations to recolor residues.")
+                return
             color = colorchooser.askcolor(title=f"Color for {gid}")[1]
             if color:
                 self._mark_style_custom()
-                self.marker_color_overrides[gid] = color
                 target_objs = viz.artist_map[gid]
-                target_objs["scatter"].set_facecolor(color)
+                if isinstance(artist, PolyCollection):
+                    residue_key = target_objs["residue_key"]
+                    self.residue_color_overrides[residue_key] = color
+                    for objects in viz.artist_map.values():
+                        if objects.get("residue_key") == residue_key and objects.get("collection") is not None:
+                            objects["collection"].set_facecolor(color)
+                else:
+                    self.marker_color_overrides[gid] = color
+                    target_objs["scatter"].set_facecolor(color)
                 self.current_canvas.draw()
-                self._successful_single_run["style"] = self.get_style_config()
+                self._remember_interactive_style()
+
+    def _remember_interactive_style(self):
+        successful_run = self._successful_single_run
+        style = dict(successful_run["viz"].last_style)
+        style.update(
+            {
+                "label_offsets": dict(self.label_offsets),
+                "marker_color_overrides": dict(self.marker_color_overrides),
+                "residue_color_overrides": dict(self.residue_color_overrides),
+            }
+        )
+        successful_run["style"] = style
+        successful_run["viz"].last_style = dict(style)
+
+    @staticmethod
+    def _label_anchor(objects):
+        anchor = objects.get("anchor")
+        if anchor is not None:
+            return anchor
+        scatter = objects.get("scatter")
+        return scatter.get_offsets()[0] if scatter is not None else None
 
     def on_mouse_press(self, event):
         successful_run = self._successful_single_run
-        if successful_run is None or not event.inaxes:
+        if self._busy or self._pending_single_run is not None or successful_run is None or not event.inaxes:
             return
         for gid, objs in successful_run["viz"].artist_map.items():
             txt = objs.get("text")
@@ -62,9 +121,8 @@ class PlotMixin:
             return
         txt.set_position((event.xdata, event.ydata))
         connector = objs.get("connector")
-        scatter = objs.get("scatter")
-        if connector is not None and scatter is not None:
-            pt = scatter.get_offsets()[0]
+        pt = self._label_anchor(objs)
+        if connector is not None and pt is not None:
             connector.set_data([pt[0], event.xdata], [pt[1], event.ydata])
         self.current_canvas.draw_idle()
 
@@ -74,12 +132,11 @@ class PlotMixin:
         gid = self._drag_state["gid"]
         objs = self._successful_single_run["viz"].artist_map.get(gid, {})
         txt = objs.get("text")
-        scatter = objs.get("scatter")
-        if txt is not None and scatter is not None:
-            pt = scatter.get_offsets()[0]
+        pt = self._label_anchor(objs)
+        if txt is not None and pt is not None:
             tx, ty = txt.get_position()
             self.label_offsets[gid] = (float(tx - pt[0]), float(ty - pt[1]))
-            self._successful_single_run["style"] = self.get_style_config()
+            self._remember_interactive_style()
         self._drag_state = None
 
     def update_plot(
@@ -91,15 +148,33 @@ class PlotMixin:
         *,
         run_params=None,
         run_manifest=None,
+        all_patches=None,
     ):
+        previous_render = {name: getattr(viz, name, None) for name in ("artist_map", "last_style", "last_report")}
         try:
+            all_patches = list(patches if all_patches is None else all_patches)
+            params = run_params if complete_task else self._successful_single_run["params"]
+            style = dict(style)
+            style["min_points"] = params.get("min_points", viz.config.min_points)
+            patches, _counts = select_patches_for_display(
+                all_patches, viz, map_style=style.get("map_style", "markers"),
+                min_points=params.get("min_points", viz.config.min_points),
+            )
             fig = viz.plot_patches(patches, show=False, style_config=style)
         except Exception as exc:
+            for name, value in previous_render.items():
+                setattr(viz, name, value)
             if complete_task:
-                self.show_error(self._previous_result_message(f"Failed to generate plot: {exc}"))
+                pending = getattr(self, "_pending_single_run", None)
+                message = (
+                    f"Calculation complete. The atlas is ready to save.\n"
+                    f"Adjust the display settings and click Apply Style to draw it.\n\n{exc}"
+                    if pending is not None else f"Failed to generate plot: {exc}"
+                )
+                self.show_error(self._previous_result_message(message))
             else:
                 self.log(f"Failed to update plot style: {exc}")
-            return
+            return False
 
         annotation = dict(viz.last_report)
 
@@ -131,11 +206,18 @@ class PlotMixin:
                 "manifest": manifest,
                 "params": dict(run_params),
                 "patches": patches,
+                "all_patches": all_patches,
                 "log": list(self.current_run_log),
-                "style": dict(style),
+                "style": dict(viz.last_style),
                 "viz": viz,
             }
             self._successful_single_run = successful_run
+            self._pending_single_run = None
+            self._run_style = None
+            self._restore_atlas_style(viz.last_style)
+            self.var_annotation_target.set("Current map")
+            if self._next_run_annotations is not None and self._next_run_annotations["context"] == self._result_context(successful_run):
+                self._next_run_annotations = None
             self._finish_task()
             if successful_run["params"].get("auto_save"):
                 try:
@@ -145,20 +227,23 @@ class PlotMixin:
         else:
             successful_run = self._successful_single_run
             successful_run["figure"] = fig
+            successful_run["patches"] = patches
+            successful_run["all_patches"] = all_patches
             successful_run["manifest"]["visualization_annotation"] = annotation
-            successful_run["style"] = dict(style)
+            successful_run["style"] = dict(viz.last_style)
             self._refresh_action_states()
         annotation = viz.last_report
         interaction_source = str(annotation.get("interaction_residue_source", "interaction"))
-        self.log(
-            "Success! Displaying {} patches and {} annotated residues "
-            "({} {} interaction residues on the patch domain).".format(
-                len(patches),
-                int(annotation.get("displayed_residue_count", 0)),
-                int(annotation.get("patch_interaction_residue_count", 0)),
-                interaction_source,
-            )
+        source_label = {"prolif": "ProLIF", "geometric": "geometric", "geometric_fallback": "geometric"}.get(
+            interaction_source, "recorded"
         )
+        residue_count = int(annotation.get("displayed_residue_count", 0))
+        self.log(
+            f"Showing {len(patches)} {'patch' if len(patches) == 1 else 'patches'} and "
+            f"{residue_count} {'residue' if residue_count == 1 else 'residues'} "
+            f"({int(annotation.get('patch_interaction_residue_count', 0))} with {source_label} contacts)."
+        )
+        return True
 
     def _build_plot_toolbar(self, parent):
         actions = [
@@ -168,16 +253,14 @@ class PlotMixin:
             ("Pan", self.current_toolbar.pan),
             ("Zoom", self.current_toolbar.zoom),
         ]
+        controls = tk.Frame(parent, bg="#ffffff")
+        controls.pack(anchor=tk.W)
         for label, command in actions:
-            tk.Button(parent, text=label, command=command, relief=tk.FLAT, padx=8, pady=2).pack(
+            tk.Button(controls, text=label, command=command, relief=tk.FLAT, padx=8, pady=2).pack(
                 side=tk.LEFT, padx=(0, 4)
             )
-        tk.Label(
-            parent,
-            text="Drag labels to reposition; click residue markers to recolor.",
-            bg="#ffffff",
-            fg="#6b7280",
-        ).pack(side=tk.RIGHT)
+        tk.Label(parent, text="Drag labels to move them; click residues to change colors.",
+                 bg="#ffffff", fg="#52616B", font=(self.config.font_family, 9)).pack(anchor=tk.W)
 
     def _close_current_figure(self):
         if self.current_fig is not None:
@@ -187,6 +270,7 @@ class PlotMixin:
         self.current_toolbar = None
 
     def show_error(self, msg):
+        self._restore_display_highlights()
         self._finish_task()
         self.log(f"Error: {msg}")
         messagebox.showerror("Pipeline Error", msg)

@@ -16,16 +16,20 @@ class ReleaseMetadataTests(unittest.TestCase):
         citation_version = re.search(r'^version: "([^"]+)"$', citation, re.MULTILINE)
         citation_date = re.search(r'^date-released: "([^"]+)"$', citation, re.MULTILINE)
         self.assertIsNotNone(citation_version)
-        self.assertIsNotNone(citation_date)
         self.assertEqual(citation_version.group(1), __version__)
         self.assertIn("cff-version: 1.2.0", citation)
 
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        self.assertIn(f"## [{__version__}] - {citation_date.group(1)}", changelog)
-
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"TopoPPI {__version__}", readme)
-        self.assertIn(f"/tag/v{__version__}", readme)
+        if f"## [{__version__}] - In preparation" in changelog:
+            self.assertIsNone(citation_date, "A working-tree version has no release date yet.")
+            self.assertIn("in preparation", readme)
+            self.assertIn("https://github.com/GeraltZeroZhong/TopoPPI/releases", readme)
+        else:
+            self.assertIsNotNone(citation_date)
+            self.assertIn(f"## [{__version__}] - {citation_date.group(1)}", changelog)
+            self.assertIn(f"/tag/v{__version__}", readme)
         self.assertNotRegex(readme, r'(?:\]\(|src=")\./')
         self.assertIn("docs/assets/topoppi-gui-sanitized.png", readme)
 
@@ -58,6 +62,8 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("CurStepChanged", installer)
         self.assertIn("ResultCode <> 0", installer)
         self.assertIn("RaiseException", installer)
+        self.assertIn("GetCustomSetupExitCode", installer)
+        self.assertIn("BootstrapExitCode := ResultCode", installer)
         self.assertIn(r'Filename: "{app}\env\pythonw.exe"', installer)
         self.assertIn("launch_gui.pyw", installer)
         self.assertNotIn("TopoPPI GUI.cmd", installer)
@@ -69,6 +75,7 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("TopoPPI CLI.cmd", uninstaller)
         self.assertIn("TopoPPI Command Prompt.cmd", uninstaller)
         self.assertIn("gui-startup.log", uninstaller)
+        self.assertIn("installation.log", uninstaller)
         self.assertIn('Type: dirifempty; Name: "{app}"', installer)
         self.assertIn("TopoPPI-LICENSE.txt", installer)
         self.assertIn("OptCuts-LICENSE.txt", installer)
@@ -87,7 +94,8 @@ class ReleaseMetadataTests(unittest.TestCase):
         bootstrap = (ROOT / "installer" / "windows" / "install_topoppi.ps1").read_text(encoding="utf-8")
         self.assertIn('Join-Path $InstallDir "TopoPPI CLI.cmd"', bootstrap)
         self.assertIn('Join-Path $InstallDir "TopoPPI Command Prompt.cmd"', bootstrap)
-        self.assertIn('set "PATH=$EnvDir\\Scripts;$EnvDir;%PATH%"', bootstrap)
+        self.assertIn('set "PATH=%~dp0env\\Scripts;%~dp0env;%PATH%"', bootstrap)
+        self.assertIn('"%~dp0env\\Scripts\\topoppi.exe" %*', bootstrap)
         self.assertIn("cmd.exe /K", bootstrap)
 
     def test_macos_launcher_explains_first_start_and_recovery(self):
@@ -146,12 +154,16 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 40", windows)
         self.assertIn('"/DIR=`"$installDir`""', windows)
         self.assertIn('"/LOG=`"$installLog`""', windows)
-        self.assertIn('"TopoPPI Installed"', windows)
+        self.assertIn('"TopoPPI 用户"', windows)
+        self.assertIn('@("topoppi --version", "exit") | & $commandPrompt', windows)
         self.assertIn(r"tests\fixtures\tiny_complex.pdb", windows)
         self.assertNotIn(r"tests\fixtures\1bvk.pdb", windows)
         self.assertIn("tests/fixtures/1bvk.pdb", macos)
         self.assertIn('"cmake<4"', macos)
         self.assertEqual(macos.count('export PATH="$RUNNER_TEMP/topoppi-macos-build/bin:$PATH"'), 2)
+        for workflow in (windows, macos):
+            self.assertIn("--map-style footprints --export-atlas", workflow)
+            self.assertIn("smoke_footprints.py", workflow)
 
     @unittest.skipUnless(
         (ROOT / "tools" / "OptCuts" / "OptCuts_bin").is_file(),
