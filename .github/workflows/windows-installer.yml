@@ -94,10 +94,15 @@ jobs:
           $installLog = Join-Path $env:RUNNER_TEMP "TopoPPI Installer.log"
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
           Set-Content -Path (Join-Path $installDir "TopoPPI GUI.cmd") -Value "legacy launcher"
+          $mappedDrivesBefore = @(& subst.exe)
           $installProcess = Start-Process -FilePath $installer -ArgumentList @(
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$installDir`"", "/LOG=`"$installLog`""
           ) -PassThru
           $installProcess | Wait-Process -Timeout 1800 -ErrorAction Stop
+          $mappedDrivesAfter = @(& subst.exe)
+          if (($mappedDrivesBefore -join "`n") -ne ($mappedDrivesAfter -join "`n")) {
+            throw "Windows setup left a package-cache drive mapped."
+          }
           if ($installProcess.ExitCode -ne 0) {
             Get-Content $installLog -Tail 200 -ErrorAction SilentlyContinue
             Get-Content (Join-Path $installDir "installation.log") -Tail 200 -ErrorAction SilentlyContinue
@@ -159,6 +164,7 @@ jobs:
           }
 
           $env:MPLBACKEND = "Agg"
+          $env:PYTHONUTF8 = "1"
           $smokeOutput = Join-Path $env:RUNNER_TEMP "topoppi-windows-smoke.png"
           $smokeAtlas = Join-Path $env:RUNNER_TEMP "topoppi-windows-smoke.npz"
           & $cli tests\fixtures\tiny_complex.pdb -A A -B B `

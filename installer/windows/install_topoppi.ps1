@@ -9,6 +9,8 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $TranscriptStarted = $false
+$CacheDrive = $null
+$Subst = Join-Path $env:SystemRoot "System32\subst.exe"
 
 function Write-Step {
     param([string]$Message)
@@ -47,12 +49,29 @@ try {
         Invoke-WebRequest -Uri $MicromambaUrl -OutFile $Micromamba
     }
 
+    # Micromamba's index reader and archive extractor need an ASCII cache path.
+    # Keep the environment at its selected path and map only cache access during setup.
+    if ($RootPrefix -match '[^\x00-\x7F]') {
+        $UsedDrives = [System.IO.Directory]::GetLogicalDrives()
+        foreach ($Code in 90..68) {
+            $CandidateDrive = "{0}:" -f [char]$Code
+            if ($UsedDrives -notcontains "$CandidateDrive\") {
+                Invoke-External $Subst @($CandidateDrive, $InstallDir)
+                $CacheDrive = $CandidateDrive
+                $RootPrefix = "$CacheDrive\mamba-root"
+                break
+            }
+        }
+        if ($null -eq $CacheDrive) {
+            throw "Windows setup needs an unused drive letter for its package cache."
+        }
+    }
     $env:MAMBA_ROOT_PREFIX = $RootPrefix
-    # Libsolv reads Windows cache paths through the Unicode file API.
-    $env:MAMBA_MAMBA_REPODATA_PARSING = "false"
-    # Earlier micromamba versions retained by existing installations use this name.
-    $env:MAMBA_EXPERIMENTAL_REPODATA_PARSING = "false"
+    $env:PYTHONUTF8 = "1"
     Invoke-External $Micromamba @("--version")
+    if ($null -ne $CacheDrive) {
+        Invoke-External $Micromamba @("clean", "--index-cache", "-y")
+    }
     $Packages = @(
         "python=3.10",
         "tk",
@@ -97,7 +116,7 @@ try {
     }
 
     Write-Step "Installing TopoPPI from $ResolvedPackageSpec"
-    Invoke-External $Python @("-m", "pip", "install", "--upgrade", "pip")
+    Invoke-External $Python @("-m", "pip", "install", "--upgrade", "--force-reinstall", "pip")
     Invoke-External $Python @("-m", "pip", "install", "prolif>=2.0")
     Invoke-External $Python @("-m", "pip", "install", "--no-deps", "--force-reinstall", $ResolvedPackageSpec)
 
@@ -126,6 +145,7 @@ try {
     Remove-Item (Join-Path $InstallDir "TopoPPI GUI.cmd") -Force -ErrorAction SilentlyContinue
     $CliLauncher = @"
 @echo off
+set "PYTHONUTF8=1"
 set "TOPOPPI_HOME=%~dp0"
 set "TOPOPPI_OPTCUTS_BIN=%~dp0bin\OptCuts_bin.exe"
 "%~dp0env\Scripts\topoppi.exe" %*
@@ -134,6 +154,7 @@ set "TOPOPPI_OPTCUTS_BIN=%~dp0bin\OptCuts_bin.exe"
 
     $CommandPromptLauncher = @"
 @echo off
+set "PYTHONUTF8=1"
 set "TOPOPPI_HOME=%~dp0"
 set "TOPOPPI_OPTCUTS_BIN=%~dp0bin\OptCuts_bin.exe"
 set "PATH=%~dp0env\Scripts;%~dp0env;%PATH%"
@@ -153,6 +174,9 @@ catch {
     exit 1
 }
 finally {
+    if ($null -ne $CacheDrive) {
+        Invoke-External $Subst @($CacheDrive, "/D")
+    }
     if ($TranscriptStarted) {
         Stop-Transcript | Out-Null
     }
