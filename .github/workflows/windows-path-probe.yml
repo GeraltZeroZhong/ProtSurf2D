@@ -36,5 +36,7 @@ jobs:
           }
           & (Join-Path $probeRoot "env\python.exe") -c "import sys; print(sys.executable)"
           if ($LASTEXITCODE -ne 0) { throw "The Unicode environment could not start Python." }
+          & (Join-Path $probeRoot "env\python.exe") -m pip install --upgrade --force-reinstall pip
+          if ($LASTEXITCODE -ne 0) { throw "Python could not refresh pip's Windows launchers." }
           & (Join-Path $probeRoot "env\Scripts\pip.exe") --version
           if ($LASTEXITCODE -ne 0) { throw "The Unicode environment could not start pip." }
