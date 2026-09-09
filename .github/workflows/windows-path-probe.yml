@@ -1,0 +1,37 @@
+name: Windows cache path probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - name: Exercise a mapped cache with a Unicode environment
+        shell: pwsh
+        run: |
+          $probeRoot = Join-Path $env:RUNNER_TEMP "TopoPPI 用户"
+          $cacheRoot = Join-Path $probeRoot "cache"
+          New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+          $micromamba = Join-Path $probeRoot "micromamba.exe"
+          Invoke-WebRequest -Uri "https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-win-64" -OutFile $micromamba
+          $env:MAMBA_MAMBA_REPODATA_PARSING = "false"
+          & subst.exe Z: $cacheRoot
+          if ($LASTEXITCODE -ne 0) { throw "Cache mapping failed." }
+          try {
+            $env:MAMBA_ROOT_PREFIX = 'Z:\root'
+            & $micromamba config list root_prefix pkgs_dirs mamba_repodata_parsing
+            & $micromamba create -y -p (Join-Path $probeRoot "env") -c conda-forge python=3.10 pip --json
+            if ($LASTEXITCODE -ne 0) { throw "Mapped-cache environment creation failed." }
+            & (Join-Path $probeRoot "env\python.exe") -c "import sys; print(sys.executable)"
+            if ($LASTEXITCODE -ne 0) { throw "The Unicode environment could not start Python." }
+            & (Join-Path $probeRoot "env\Scripts\pip.exe") --version
+            if ($LASTEXITCODE -ne 0) { throw "The Unicode environment could not start pip." }
+          }
+          finally {
+            & subst.exe Z: /D
+          }
