@@ -22,7 +22,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
           $micromamba = Join-Path $probeRoot "micromamba.exe"
           Invoke-WebRequest -Uri "https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-win-64" -OutFile $micromamba
-          $env:MAMBA_MAMBA_REPODATA_PARSING = "false"
+          $env:PYTHONUTF8 = "1"
           & subst.exe Z: $cacheRoot
           if ($LASTEXITCODE -ne 0) { throw "Cache mapping failed." }
           try {
@@ -30,11 +30,11 @@ jobs:
             & $micromamba config list root_prefix pkgs_dirs mamba_repodata_parsing
             & $micromamba create -y -p (Join-Path $probeRoot "env") -c conda-forge python=3.10 pip --json
             if ($LASTEXITCODE -ne 0) { throw "Mapped-cache environment creation failed." }
-            & (Join-Path $probeRoot "env\python.exe") -c "import sys; print(sys.executable)"
-            if ($LASTEXITCODE -ne 0) { throw "The Unicode environment could not start Python." }
-            & (Join-Path $probeRoot "env\Scripts\pip.exe") --version
-            if ($LASTEXITCODE -ne 0) { throw "The Unicode environment could not start pip." }
           }
           finally {
             & subst.exe Z: /D
           }
+          & (Join-Path $probeRoot "env\python.exe") -c "import sys; print(sys.executable)"
+          if ($LASTEXITCODE -ne 0) { throw "The Unicode environment could not start Python." }
+          & (Join-Path $probeRoot "env\Scripts\pip.exe") --version
+          if ($LASTEXITCODE -ne 0) { throw "The Unicode environment could not start pip." }
