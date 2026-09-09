@@ -58,7 +58,7 @@ try {
             if ($UsedDrives -notcontains "$CandidateDrive\") {
                 Invoke-External $Subst @($CandidateDrive, $InstallDir)
                 $CacheDrive = $CandidateDrive
-                $RootPrefix = "$CacheDrive\mamba-root"
+                $RootPrefix = "$CacheDrive\$([System.IO.Path]::GetRandomFileName())"
                 break
             }
         }
@@ -69,9 +69,6 @@ try {
     $env:MAMBA_ROOT_PREFIX = $RootPrefix
     $env:PYTHONUTF8 = "1"
     Invoke-External $Micromamba @("--version")
-    if ($null -ne $CacheDrive) {
-        Invoke-External $Micromamba @("clean", "--index-cache", "-y")
-    }
     $Packages = @(
         "python=3.10",
         "tk",
@@ -175,6 +172,9 @@ catch {
 }
 finally {
     if ($null -ne $CacheDrive) {
+        if (Test-Path $RootPrefix) {
+            Remove-Item -Recurse -Force $RootPrefix
+        }
         Invoke-External $Subst @($CacheDrive, "/D")
     }
     if ($TranscriptStarted) {
