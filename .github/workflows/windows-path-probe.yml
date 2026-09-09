@@ -1,6 +1,9 @@
 name: Windows cache path probe
 
 on:
+  push:
+    branches:
+      - codex/v2.0
   workflow_dispatch:
 
 permissions:
